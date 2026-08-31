@@ -33,7 +33,7 @@ YouTube et n'a pas vocation à être publié.
 | Bouton retour Android → historique GeckoView | `MainActivity.setupBackNavigation()` |
 | Session persistante (cookies, compte Google, onglet courant) | `GeckoEngine` (profil Gecko + `SessionState` sérialisé) |
 | Interception des liens `youtube.com` / `youtu.be` / `m.youtube.com` | `AndroidManifest.xml` (intent-filters) + `YouTubeLinks.normalize()` |
-| Picture-in-Picture natif | `MainActivity.enterPip()` + `setPipLayout()` côté content script |
+| Picture-in-Picture natif (miniature ; la vidéo s'y met en pause — voir Limites) | `MainActivity.enterPip()` |
 | Audio en arrière-plan écran éteint (MediaSession + wake lock) | `PlaybackService`, `MediaBridge` |
 | Icône et nom personnalisés, sans marque YouTube | `res/drawable/ic_launcher_foreground.xml`, `strings.xml` |
 | Blocage de pub | `AdBlock.kt` + `assets/extensions/ytblock/` |
@@ -47,12 +47,12 @@ Détails d'implémentation qui méritent un mot :
   dans une description, par exemple) est ouvert dans le vrai navigateur —
   l'app reste une app YouTube, pas un navigateur généraliste. Voir
   `YouTubeLinks.INTERNAL_SUFFIXES`.
-- **Picture-in-Picture.** Le PiP d'Android recopie la fenêtre de l'Activity.
-  Sans traitement, la vignette contiendrait toute la page. L'app demande donc
-  au content script d'appliquer une classe CSS (`html.tubeguard-pip`) qui
-  promeut le lecteur sur tout le viewport. On ne passe pas par l'API
-  `requestFullscreen()` du DOM parce que Firefox la refuse en l'absence de
-  geste utilisateur récent.
+- **Picture-in-Picture.** L'app entre bien en miniature, mais **la vidéo s'y met
+  en pause** : le lecteur mobile YouTube se coupe en PiP par un mécanisme qui
+  résiste au contournement (voir la section 9, « Limites connues »). La
+  promotion CSS de la vidéo dans la vignette a été désactivée. Pour du
+  multitâche, la voie fiable est l'**audio en arrière-plan** (écran éteint ou
+  bascule d'app), qui, lui, fonctionne.
 
 ---
 
@@ -520,6 +520,36 @@ de `content/ads.js`.
   web en général. Sur YouTube c'est peu gênant : l'essentiel est fait par le
   content script.
 
+### Lecture en arrière-plan et Picture-in-Picture (testé sur Galaxy A56)
+
+Comportement réel constaté et corrigé sur l'appareil, à connaître :
+
+- **Audio en arrière-plan : fonctionne** (écran éteint ou bascule vers une autre
+  app). Deux mécanismes le rendent fiable :
+  1. le `PlaybackService` (foreground + wake lock) garde le process vivant ;
+  2. surtout, `MainActivity` **ré-affirme `GeckoSession.setActive(true)` toutes
+     les 3 secondes** tant que l'app est en arrière-plan et joue. Sans ça,
+     GeckoView programme une « pression mémoire » différée quand la vue devient
+     inactive, et le son se coupait au bout de quelques dizaines de secondes —
+     y compris avec la batterie réglée sur « Sans restriction ». Le réglage
+     batterie reste utile, mais ne suffit pas à lui seul.
+- **YouTube coupe la lecture sur perte de visibilité ET de focus.** Le content
+  script (`ads.js`) spoofe donc les DEUX : `document.hidden` / `visibilityState`
+  (toujours « visible ») et `document.hasFocus()` (toujours vrai), et avale les
+  évènements `visibilitychange` / `blur` de la fenêtre. Ces noms d'API sont
+  stables, mais si une future version du lecteur mobile trouve un autre signal,
+  la lecture pourra à nouveau se couper en arrière-plan.
+- **Picture-in-Picture vidéo : NE tient PAS la lecture.** La vidéo se met en
+  pause dès l'entrée en miniature. En cause : même visibilité et focus spoofés,
+  le lecteur mobile YouTube se remet en pause en boucle en PiP (probablement lié
+  au redimensionnement de la fenêtre), et une relance native lutte sans jamais
+  tenir — ce qui produisait une saccade. Cette relance a été **retirée** : le
+  PiP se met donc en pause **proprement**. C'est une **limite dure de GeckoView**
+  pour ce cas ; la voie fiable pour écouter en multitâche est l'audio en
+  arrière-plan ci-dessus. La promotion CSS qui devait cadrer la vignette sur la
+  seule vidéo a aussi été désactivée (elle provoquait un écran noir au démarrage
+  quand sa classe restait collée après une sortie de PiP).
+
 ### Le reste
 
 - **Plan A quasi condamné** — voir la section 3. Le repli automatique
@@ -529,16 +559,16 @@ de `content/ads.js`.
   compression qui ramène ça à ~75 Mo au détriment de l'espace sur le téléphone.
 - **Interception des liens** : ne marche pas tant que tu n'as pas fait la
   manip de la section 6. Ce n'est pas un bug, c'est une contrainte d'Android 12+.
-- **Lecture en arrière-plan** : certaines surcouches constructeur (MIUI, OneUI,
-  ColorOS, EMUI) tuent les services foreground malgré tout. Si l'audio se coupe
-  quand tu éteins l'écran, mets TubeGuard en « **Non optimisée** » /
-  « **Autoriser l'activité en arrière-plan** » dans les réglages de batterie.
+- **Réglage batterie** : même si la ré-affirmation `setActive` évite la coupure
+  côté GeckoView, garde TubeGuard en « **Sans restriction** » (One UI :
+  *Paramètres → Applications → TubeGuard → Batterie*) et hors « veille profonde »
+  — les surcouches constructeur (One UI, MIUI, ColorOS, EMUI) tuent volontiers
+  les services de lecture prolongés.
 - **Autoplay** : Gecko peut bloquer le démarrage automatique de la vidéo
   suivante. Si ça te gêne, active `aboutConfigEnabled` en release et passe
   `media.autoplay.default` à `0` via `about:config`.
-- **Picture-in-Picture** : la vignette recopie la fenêtre de l'app. Le
-  contournement CSS (`html.tubeguard-pip`) dépend lui aussi de la structure DOM
-  de YouTube et peut avoir besoin d'être ajusté.
+- **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — le PiP vidéo
+  se met en pause (limite GeckoView assumée), la promotion CSS a été désactivée.
 - **Pas de sauvegarde** : `allowBackup="false"` volontairement — le profil Gecko
   contient tes cookies de session Google, on ne veut pas qu'ils partent sur
   Google Drive. Corollaire : changer de téléphone = se reconnecter.
