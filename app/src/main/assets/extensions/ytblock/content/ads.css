@@ -1,0 +1,131 @@
+/*
+ * content/ads.css — filtres cosmétiques statiques pour YouTube.
+ *
+ * Injectés à `document_start`, donc AVANT le premier rendu : les encarts
+ * publicitaires ne clignotent pas à l'écran avant d'être masqués (contrairement
+ * à un masquage fait en JavaScript après coup).
+ *
+ * Les sélecteurs sont écrits sur le modèle des filtres cosmétiques d'uBlock
+ * Origin pour youtube.com. Ils ciblent les custom elements de Polymer utilisés
+ * par YouTube :
+ *   - préfixe `ytm-`  → interface mobile (m.youtube.com), celle qu'on utilise
+ *   - préfixe `ytd-`  → interface desktop, gardée au cas où
+ *   - préfixe `ytp-`  → le lecteur vidéo lui-même, commun aux deux
+ *
+ * ⚠️ Ces noms d'éléments changent au gré des refontes de YouTube. Si des
+ * bannières réapparaissent, c'est ici qu'il faut ajouter les nouveaux
+ * sélecteurs (inspecte la page avec about:debugging depuis Firefox desktop).
+ */
+
+/* --- Interface mobile (m.youtube.com) ---------------------------------- */
+ytm-promoted-video-renderer,
+ytm-promoted-sparkles-web-renderer,
+ytm-promoted-sparkles-text-search-renderer,
+ytm-companion-ad-renderer,
+ytm-carousel-ad-renderer,
+ytm-search-video-ad-renderer,
+ytm-compact-promoted-video-renderer,
+ytm-statement-banner-renderer,
+ytm-brand-video-singleton-renderer,
+ytm-brand-video-shelf-renderer,
+ytm-player-ad-renderer,
+ytm-inline-survey-renderer,
+ytm-paid-content-overlay-renderer,
+ytm-mealbar-promo-renderer,
+ytm-single-column-browse-results-renderer[ad],
+.ad-container,
+.ad-div,
+#player-ads {
+  display: none !important;
+}
+
+/* --- Interface desktop (www.youtube.com) -------------------------------- */
+ytd-ad-slot-renderer,
+ytd-display-ad-renderer,
+ytd-promoted-sparkles-web-renderer,
+ytd-promoted-sparkles-text-search-renderer,
+ytd-promoted-video-renderer,
+ytd-in-feed-ad-layout-renderer,
+ytd-banner-promo-renderer,
+ytd-banner-promo-renderer-background,
+ytd-statement-banner-renderer,
+ytd-video-masthead-ad-v3-renderer,
+ytd-primetime-promo-renderer,
+ytd-merch-shelf-renderer,
+ytd-companion-slot-renderer,
+ytd-action-companion-ad-renderer,
+ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
+#masthead-ad,
+#player-ads,
+#panels-full-bleed-container > ytd-engagement-panel-section-list-renderer[target-id*="ads"] {
+  display: none !important;
+}
+
+/* --- Lecteur vidéo (ytp-*) ---------------------------------------------- */
+.ytp-ad-overlay-container,
+.ytp-ad-overlay-slot,
+.ytp-ad-message-container,
+.ytp-ad-action-interstitial,
+.ytp-ad-image-overlay,
+.ytp-ad-text-overlay,
+.ytp-featured-product,
+.ytp-suggested-action,
+.ytp-paid-content-overlay,
+.video-ads.ytp-ad-module,
+.videoAdUi,
+.videoAdUiTopBar,
+#player-ads-overlay {
+  display: none !important;
+}
+
+/*
+ * Le conteneur `.video-ads` NE DOIT PAS être masqué avec display:none :
+ * content/ads.js s'appuie sur sa présence et sur la classe `ad-showing` du
+ * lecteur pour détecter une coupure et la sauter. On le rend seulement
+ * invisible et non cliquable.
+ */
+.video-ads {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* --- Mode « vignette » activé par l'app avant d'entrer en PiP ------------ */
+/*
+ * Voir setPipLayout() dans content/ads.js. On promeut le lecteur sur tout le
+ * viewport pour que la vignette Picture-in-Picture d'Android — qui recopie la
+ * fenêtre de l'Activity — ne contienne QUE la vidéo.
+ */
+html.tubeguard-pip,
+html.tubeguard-pip body {
+  overflow: hidden !important;
+  background: #000 !important;
+}
+
+html.tubeguard-pip #player,
+html.tubeguard-pip #movie_player,
+html.tubeguard-pip .html5-video-player {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  z-index: 2147483647 !important;
+  background: #000 !important;
+}
+
+html.tubeguard-pip video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
+
+/* Pas de contrôles ni de titre dans la vignette. */
+html.tubeguard-pip .ytp-chrome-top,
+html.tubeguard-pip .ytp-chrome-bottom,
+html.tubeguard-pip .ytp-gradient-top,
+html.tubeguard-pip .ytp-gradient-bottom,
+html.tubeguard-pip .player-controls-background,
+html.tubeguard-pip .player-controls-content {
+  display: none !important;
+}

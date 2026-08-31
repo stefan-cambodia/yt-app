@@ -1,0 +1,96 @@
+[Adblock Plus 2.0]
+! Title: TubeGuard — filtres YouTube
+! Version: 1.0.0
+! Expires: 3 days
+!
+! Liste maison, au format Adblock Plus, dédiée à YouTube.
+!
+! ATTENTION — CE QU'IL NE FAUT SURTOUT PAS AJOUTER ICI :
+!   ||googlevideo.com^          -> casse la lecture (c'est le CDN vidéo)
+!   ||youtube.com/youtubei/^    -> casse toute l'application web
+!   ||youtube.com/s/player/^    -> casse le lecteur
+! Ces motifs sont de toute façon protégés par la liste NEVER_BLOCK de
+! background.js, mais autant ne pas les écrire.
+!
+! ---------------------------------------------------------------------------
+! 1. Endpoints publicitaires et télémétrie de pub
+! ---------------------------------------------------------------------------
+||youtube.com/pagead/
+||youtube.com/ptracking
+||youtube.com/api/stats/ads
+||youtube.com/get_midroll_info
+||youtube.com/get_video_info?*&adformat=
+||youtube.com/error_204
+||youtube.com/csi_204
+||s.youtube.com/api/stats/ads
+||googleads.g.doubleclick.net^
+||pubads.g.doubleclick.net^
+||securepubads.g.doubleclick.net^
+||static.doubleclick.net^
+||stats.g.doubleclick.net^
+||ad.doubleclick.net^
+||doubleclick.net^
+||googleadservices.com^
+||googlesyndication.com^
+||googletagservices.com^
+||google-analytics.com^
+||analytics.google.com^
+||adservice.google.com^
+||adservice.google.fr^
+||adservice.google.be^
+||2mdn.net^
+||imasdk.googleapis.com^
+
+! ---------------------------------------------------------------------------
+! 2. Filtres cosmétiques — interface mobile (m.youtube.com)
+! ---------------------------------------------------------------------------
+youtube.com##ytm-promoted-video-renderer
+youtube.com##ytm-promoted-sparkles-web-renderer
+youtube.com##ytm-promoted-sparkles-text-search-renderer
+youtube.com##ytm-compact-promoted-video-renderer
+youtube.com##ytm-companion-ad-renderer
+youtube.com##ytm-carousel-ad-renderer
+youtube.com##ytm-search-video-ad-renderer
+youtube.com##ytm-statement-banner-renderer
+youtube.com##ytm-brand-video-singleton-renderer
+youtube.com##ytm-brand-video-shelf-renderer
+youtube.com##ytm-player-ad-renderer
+youtube.com##ytm-mealbar-promo-renderer
+youtube.com##ytm-inline-survey-renderer
+
+! ---------------------------------------------------------------------------
+! 3. Filtres cosmétiques — interface desktop (au cas où)
+! ---------------------------------------------------------------------------
+youtube.com##ytd-ad-slot-renderer
+youtube.com##ytd-display-ad-renderer
+youtube.com##ytd-promoted-sparkles-web-renderer
+youtube.com##ytd-promoted-video-renderer
+youtube.com##ytd-in-feed-ad-layout-renderer
+youtube.com##ytd-banner-promo-renderer
+youtube.com##ytd-statement-banner-renderer
+youtube.com##ytd-video-masthead-ad-v3-renderer
+youtube.com##ytd-primetime-promo-renderer
+youtube.com##ytd-merch-shelf-renderer
+youtube.com##ytd-companion-slot-renderer
+youtube.com##ytd-action-companion-ad-renderer
+youtube.com###masthead-ad
+youtube.com###player-ads
+
+! ---------------------------------------------------------------------------
+! 4. Overlays du lecteur
+! ---------------------------------------------------------------------------
+youtube.com##.ytp-ad-overlay-container
+youtube.com##.ytp-ad-overlay-slot
+youtube.com##.ytp-ad-message-container
+youtube.com##.ytp-ad-action-interstitial
+youtube.com##.ytp-ad-image-overlay
+youtube.com##.ytp-ad-text-overlay
+youtube.com##.ytp-featured-product
+youtube.com##.ytp-suggested-action
+youtube.com##.ytp-paid-content-overlay
+
+! ---------------------------------------------------------------------------
+! 5. Exceptions indispensables
+! ---------------------------------------------------------------------------
+! Le conteneur .video-ads doit rester dans le DOM (détection des coupures).
+youtube.com#@#.video-ads

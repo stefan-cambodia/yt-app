@@ -1,0 +1,157 @@
+[Adblock Plus 2.0]
+! Title: EasyList (extrait embarqué)
+! Version: 1.0.0
+! Homepage: https://easylist.to/
+! Licence: CC BY-SA 3.0 / GPLv3 (voir https://easylist.to/pages/licence.html)
+!
+! ═══════════════════════════════════════════════════════════════════════════
+!  CE FICHIER N'EST PAS EASYLIST COMPLÈTE.
+!
+!  EasyList fait ~2,5 Mo et ~80 000 règles. L'embarquer telle quelle dans
+!  l'APK gonflerait le binaire et ralentirait le démarrage du moteur sur
+!  mobile. On embarque donc un noyau de domaines publicitaires très courants,
+!  suffisant pour que le blocage fonctionne dès la première seconde, hors
+!  ligne et sans configuration.
+!
+!  LA VRAIE EASYLIST EST TÉLÉCHARGÉE AUTOMATIQUEMENT au premier démarrage
+!  (voir CONFIG.remoteUpdate dans background.js) puis mise en cache dans
+!  storage.local et rafraîchie tous les 3 jours. C'est elle qui fournit le
+!  gros du blocage en régime établi.
+! ═══════════════════════════════════════════════════════════════════════════
+
+! --- Régies publicitaires majeures -----------------------------------------
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||googletagservices.com^
+||googletagmanager.com^
+||adservice.google.com^
+||2mdn.net^
+||adnxs.com^
+||adsrvr.org^
+||rubiconproject.com^
+||pubmatic.com^
+||openx.net^
+||criteo.com^
+||criteo.net^
+||taboola.com^
+||outbrain.com^
+||smartadserver.com^
+||casalemedia.com^
+||sharethrough.com^
+||indexww.com^
+||media.net^
+||adform.net^
+||teads.tv^
+||yieldmo.com^
+||amazon-adsystem.com^
+||advertising.com^
+||adcolony.com^
+||applovin.com^
+||unityads.unity3d.com^
+||inmobi.com^
+||mopub.com^
+||smaato.net^
+||adroll.com^
+||bidswitch.net^
+||contextweb.com^
+||3lift.com^
+||districtm.io^
+||gumgum.com^
+||spotxchange.com^
+||spotx.tv^
+||sovrn.com^
+||lijit.com^
+||zedo.com^
+||exoclick.com^
+||popads.net^
+||propellerads.com^
+||adsterra.com^
+||revcontent.com^
+||mgid.com^
+||plista.com^
+||ligatus.com^
+||zergnet.com^
+
+! --- Mesure d'audience / traceurs ------------------------------------------
+||google-analytics.com^
+||analytics.google.com^
+||scorecardresearch.com^
+||quantserve.com^
+||chartbeat.com^
+||chartbeat.net^
+||newrelic.com^$third-party
+||nr-data.net^
+||hotjar.com^
+||hotjar.io^
+||mouseflow.com^
+||fullstory.com^
+||crazyegg.com^
+||inspectlet.com^
+||mixpanel.com^
+||segment.io^
+||segment.com^$third-party
+||amplitude.com^$third-party
+||branch.io^
+||appsflyer.com^
+||adjust.com^
+||kochava.com^
+||bugsnag.com^$third-party
+||sentry.io^$third-party
+||optimizely.com^
+||omtrdc.net^
+||demdex.net^
+||everesttech.net^
+||krxd.net^
+||bluekai.com^
+||exelator.com^
+||agkn.com^
+||rlcdn.com^
+||tapad.com^
+||crwdcntrl.net^
+||addthis.com^
+||sharethis.com^
+||disqus.com/embed/comments^$third-party
+
+! --- Réseaux sociaux (boutons de partage traçants) --------------------------
+||connect.facebook.net^$third-party
+||facebook.com/tr^$third-party
+||platform.twitter.com^$third-party
+||analytics.tiktok.com^
+||ads.linkedin.com^
+||px.ads.linkedin.com^
+||snap.licdn.com^
+||ads.pinterest.com^
+
+! --- Motifs génériques d'URL ------------------------------------------------
+/adframe.
+/ad_banner.
+/adserver.
+/ads/banner
+/advert.
+/advertisement.
+/banner_ad.
+/pagead/*
+/popunder.
+/prebid.js
+/googleads.
+/adsbygoogle.js
+&adurl=
+?advertising=
+
+! --- Filtres cosmétiques génériques -----------------------------------------
+##.ad-banner
+##.ad-container
+##.ad-placeholder
+##.ad-wrapper
+##.advertisement
+##.advertising
+##.banner-ad
+##.google-ad
+##.sponsored-content
+###ad-banner
+###ad-container
+###advertisement
+###banner-ad
+###google_ads_frame
+###sponsored

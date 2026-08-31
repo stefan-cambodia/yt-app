@@ -1,0 +1,86 @@
+PLAN A — uBlock Origin embarqué comme extension "builtIn"
+=========================================================
+
+Ce dossier est VOLONTAIREMENT VIDE. Le code d'uBlock Origin n'est pas
+redistribué ici ; c'est à toi de le déposer si tu veux tester le Plan A.
+
+-----------------------------------------------------------------------
+1. CE QU'IL FAUT DÉPOSER ICI
+-----------------------------------------------------------------------
+GeckoView charge une extension "builtIn" depuis un dossier d'assets
+DÉCOMPRESSÉ, pas depuis un .xpi. Un .xpi n'est qu'une archive ZIP :
+
+    cd app/src/main/assets/extensions/ublock/
+    curl -L -o ubo.xpi \
+      "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+    unzip ubo.xpi
+    rm ubo.xpi
+
+Après ça, `manifest.json` doit se trouver DIRECTEMENT ici :
+
+    assets/extensions/ublock/manifest.json      <-- indispensable
+    assets/extensions/ublock/js/...
+    assets/extensions/ublock/assets/...
+
+L'URI utilisée par le code est :
+    resource://android/assets/extensions/ublock/
+(le slash final est obligatoire).
+
+-----------------------------------------------------------------------
+2. ACTIVER LE PLAN A
+-----------------------------------------------------------------------
+Dans app/src/main/java/dev/stefan/tubeguard/AdBlock.kt, remplace :
+
+    val STRATEGY: Strategy = Strategy.PLAN_B_ONLY
+par :
+    val STRATEGY: Strategy = Strategy.PLAN_A_THEN_B
+
+PLAN_A_THEN_B tente uBlock Origin et retombe automatiquement sur
+l'extension maison si GeckoView le refuse. C'est le réglage à utiliser
+pour tester sans risque de se retrouver sans blocage du tout.
+
+-----------------------------------------------------------------------
+3. POURQUOI ÇA A DE FORTES CHANCES D'ÉCHOUER
+-----------------------------------------------------------------------
+Les extensions "builtIn" de GeckoView sont validées avec un jeu de
+permissions restreint. Le manifest.json d'uBlock Origin déclare des
+permissions et des clés qui sont régulièrement rejetées dans ce
+contexte :
+
+  - "webRequestBlocking"     : réservée aux extensions privilégiées
+                               ou signées selon les builds
+  - "menus" / "contextMenus" : pas d'UI de menu dans GeckoView
+  - "privacy", "browsingData", "unlimitedStorage", "dns"
+  - "background": { "persistent": true } sur les versions MV2
+  - les clés MV3 de uBO >= 1.60 ("declarative_net_request",
+    "host_permissions", "action")
+
+L'échec se manifeste par une erreur du type :
+    Extension is invalid
+    ERROR_CORRUPT_FILE
+    permission not allowed: webRequestBlocking
+
+Le message exact est loggé :
+    adb logcat -s TubeGuard.AdBlock
+
+-----------------------------------------------------------------------
+4. SI TU VEUX QUAND MÊME INSISTER
+-----------------------------------------------------------------------
+Deux pistes, dans l'ordre de difficulté :
+
+(a) Élaguer le manifest.json d'uBO
+    Retire du manifest les permissions refusées, et l'entrée
+    "options_ui" / "browser_action" qui n'a pas de sens ici. Ça marche
+    parfois, mais tu casses des fonctionnalités d'uBO (le tableau de
+    bord devient inaccessible, donc plus moyen de changer les listes).
+
+(b) Installer depuis addons.mozilla.org au lieu des assets
+    Le .xpi d'AMO est signé par Mozilla, ce qui lève une partie des
+    restrictions. Le code correspondant n'est pas dans le projet parce
+    que la signature de WebExtensionController.install() et de
+    PromptDelegate a changé plusieurs fois entre les versions de
+    GeckoView, et je ne veux pas livrer du code qui ne compile pas
+    chez toi. Le squelette est donné dans le README principal,
+    section « Plan A bis ».
+
+Dans les deux cas : le Plan B fonctionne, lui, sans bidouille.

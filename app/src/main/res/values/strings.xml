@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nom volontairement neutre : aucune référence à la marque YouTube
+         (exigence n°7). -->
+    <string name="app_name">TubeGuard</string>
+
+    <string name="playback_channel_name">Lecture</string>
+    <string name="playback_channel_desc">Contrôles de lecture et maintien de l\'audio en arrière-plan</string>
+
+    <string name="action_play">Lire</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_next">Suivant</string>
+    <string name="action_previous">Précédent</string>
+</resources>

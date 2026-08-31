@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Icône maison : un bouclier (le blocage de pub) contenant un triangle de
+    lecture. Aucun élément graphique repris de la marque YouTube (exigence n°7).
+    Zone de sécurité respectée : le dessin tient dans les 66 dp centraux.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Bouclier -->
+    <path
+        android:fillColor="#FF4F8CFF"
+        android:pathData="M54,24 L78,33 L78,55 C78,69 68,79.5 54,85 C40,79.5 30,69 30,55 L30,33 Z" />
+
+    <!-- Liseré intérieur, pour donner du relief -->
+    <path
+        android:fillColor="#FF1B1D2B"
+        android:pathData="M54,30 L72,36.8 L72,55 C72,66.2 64.3,74.7 54,79.4 C43.7,74.7 36,66.2 36,55 L36,36.8 Z" />
+
+    <!-- Triangle de lecture -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M48,45 L66,56 L48,67 Z" />
+</vector>

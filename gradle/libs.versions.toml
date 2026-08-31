@@ -1,0 +1,56 @@
+[versions]
+# ---------------------------------------------------------------------------
+# Chaîne de build
+# ---------------------------------------------------------------------------
+# Ces versions ne sont PAS choisies au hasard : elles sont imposées en cascade
+# par GeckoView.
+#
+#   geckoview 154  --dépend de-->  androidx.core 1.19.0
+#   androidx.core 1.19.0 exige     minCompileSdk = 37
+#                                  minAndroidGradlePluginVersion = 9.1.0
+#
+# D'où : AGP 9.x, compileSdk 37, et Gradle 9.x. Avec AGP 8.x le build échoue
+# avec « Dependency requires libraries and applications that depend on it to
+# compile against version 37 or later of the Android APIs ».
+#
+# Si ton Android Studio est trop ancien pour AGP 9, la solution est de
+# RÉTROGRADER GECKOVIEW (essaie "146.+" ou "140.+") plutôt que de forcer une
+# version d'androidx.core plus basse que celle attendue par le moteur.
+agp = "9.3.2"
+
+# Version du compilateur Kotlin embarqué dans AGP 9.3.2. On ne l'applique pas
+# comme plugin (AGP 9 le refuse), elle sert à contraindre kotlin-stdlib.
+kotlin = "2.2.10"
+
+# ---------------------------------------------------------------------------
+# GeckoView
+# ---------------------------------------------------------------------------
+# Version figée et vérifiée : toutes les API utilisées dans le code Kotlin ont
+# été contrôlées contre les sources de ce build précis.
+#
+# Mozilla publie une nouvelle version toutes les ~4 semaines. Pour passer à
+# une plus récente, prends le dernier dossier de :
+#   https://maven.mozilla.org/?prefix=maven2/org/mozilla/geckoview/geckoview/
+# Tu peux aussi mettre "154.+" pour suivre automatiquement la branche 154.
+geckoview = "154.0.20260824154132"
+
+# ---------------------------------------------------------------------------
+# AndroidX
+# ---------------------------------------------------------------------------
+# core est aligné sur ce que GeckoView tire de toute façon en transitif :
+# autant l'expliciter plutôt que de subir une résolution silencieuse.
+androidx-core = "1.19.0"
+androidx-activity = "1.13.0"
+androidx-media = "1.8.0"
+
+[libraries]
+kotlin-stdlib = { group = "org.jetbrains.kotlin", name = "kotlin-stdlib", version.ref = "kotlin" }
+
+geckoview = { group = "org.mozilla.geckoview", name = "geckoview", version.ref = "geckoview" }
+
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidx-core" }
+androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "androidx-activity" }
+androidx-media = { group = "androidx.media", name = "media", version.ref = "androidx-media" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }

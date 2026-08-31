@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Clé de signature : ne JAMAIS committer
+keystore.properties
+*.jks
+*.keystore
+
+# uBlock Origin décompressé (Plan A) : code tiers, on ne le versionne pas
+/app/src/main/assets/extensions/ublock/*
+!/app/src/main/assets/extensions/ublock/LISEZ-MOI.txt
