@@ -49,7 +49,7 @@ object NativeBridge {
             object : WebExtension.MessageDelegate {
 
                 override fun onConnect(newPort: WebExtension.Port) {
-                    Log.d(TAG, "Content script connecté")
+                    Log.i(TAG, "Content script connecté (port ouvert)")
                     port = newPort
                     newPort.setDelegate(object : WebExtension.PortDelegate {
                         override fun onPortMessage(message: Any, p: WebExtension.Port) {
@@ -80,7 +80,8 @@ object NativeBridge {
         val json = message as? JSONObject ?: return
         when (json.optString("event")) {
             "adSkipped" -> Log.d(TAG, "Coupure pub sautée dans le lecteur")
-            "ready" -> Log.d(TAG, "Content script prêt sur ${json.optString("url")}")
+            "ready" -> Log.i(TAG, "Content script prêt sur ${json.optString("url")}")
+            "guard" -> Log.i(TAG, "GUARD: ${json.optString("state")} (paused=${json.optBoolean("paused")})")
         }
     }
 
@@ -90,10 +91,21 @@ object NativeBridge {
     /** Sort du plein écran HTML. */
     fun exitVideoFullscreen() = send("exitVideoFullscreen")
 
+    /** Demande de maintenir la lecture (arrière-plan écran éteint). */
+    fun keepPlaying() = send("keepPlaying")
+
+    /** Relâche le maintien de lecture (retour au premier plan). */
+    fun releasePlaying() = send("releasePlaying")
+
     private fun send(cmd: String) {
-        val p = port ?: return
+        val p = port
+        if (p == null) {
+            Log.w(TAG, "send('$cmd') IGNORÉ : aucun port connecté")
+            return
+        }
         try {
             p.postMessage(JSONObject().put("cmd", cmd))
+            Log.i(TAG, "send('$cmd') envoyé")
         } catch (e: Exception) {
             Log.w(TAG, "Envoi '$cmd' impossible", e)
             port = null

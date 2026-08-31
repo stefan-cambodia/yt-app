@@ -35,6 +35,8 @@
 
 (() => {
   const LOG = '[ytblock]';
+  // Marqueur haute visibilité (console.error remonte dans logcat/GeckoConsole).
+  try { console.error('[YTBLOCK] content script démarre sur ' + location.href); } catch (e) {}
 
   // Cette extension ne s'occupe que de YouTube.
   const host = location.hostname;
@@ -175,7 +177,14 @@
       // Variantes préfixées, encore lues par certaines versions du lecteur.
       Object.defineProperty(doc, 'webkitHidden', { configurable: true, get: neverHidden });
       Object.defineProperty(doc, 'webkitVisibilityState', { configurable: true, get: alwaysVisible });
-      console.log(LOG, 'lecture en arrière-plan : visibilité spoofée');
+
+      // ── FOCUS ──────────────────────────────────────────────────────────
+      // YouTube mobile met la vidéo en pause quand la FENÊTRE perd le focus
+      // (passage en PiP / arrière-plan), indépendamment de la visibilité. On
+      // fait donc croire que la page a toujours le focus, et on gobe les
+      // évènements 'blur' de fenêtre avant que le code de YouTube ne les reçoive.
+      doc.hasFocus = exportFunction(function () { return true; }, win);
+      console.error('[YTBLOCK] visibilité+focus spoofés — hidden=' + doc.hidden);
     } catch (e) {
       console.warn(LOG, 'spoof de visibilité impossible', e);
     }
@@ -188,6 +197,17 @@
     for (const type of ['visibilitychange', 'webkitvisibilitychange']) {
       document.addEventListener(type, swallow, true);
       window.addEventListener(type, swallow, true);
+    }
+    // 'blur' / 'pagehide' de la FENÊTRE : on ne gobe QUE ceux dont la cible est
+    // la fenêtre/le document (pas le blur d'un champ de saisie, sinon on
+    // casserait les formulaires).
+    const swallowWindowOnly = function (event) {
+      if (event.target === window || event.target === document) {
+        event.stopImmediatePropagation();
+      }
+    };
+    for (const type of ['blur', 'pagehide']) {
+      window.addEventListener(type, swallowWindowOnly, true);
     }
   }
 
@@ -386,6 +406,50 @@
   }
 
   // =========================================================================
+  // 3bis. Anti-pause AUTONOME (sans canal natif)
+  // =========================================================================
+  //
+  // Objectif : garder la lecture quand l'app n'est pas au premier plan (PiP,
+  // écran éteint, bascule vers une autre app) SANS dépendre d'un message
+  // d'Android — le canal natif s'est révélé peu fiable à établir.
+  //
+  // Signal utilisé : document.hasFocus(). Contrairement à document.hidden (que
+  // l'on spoofe pour empêcher YouTube de se mettre en pause), hasFocus() n'est
+  // PAS spoofé et reflète la réalité :
+  //   - premier plan            -> hasFocus() = true  (l'utilisateur gère la pause)
+  //   - PiP / écran éteint / autre app -> hasFocus() = false
+  //
+  // Règle : si la page n'a pas le focus ET que la vidéo jouait juste avant de
+  // perdre le focus ET qu'elle vient de se mettre en pause, on relance. En PiP
+  // l'utilisateur n'a aucun bouton pause de toute façon.
+  let wasPlayingWhenUnfocused = false;
+
+  function noteFocusLoss() {
+    const v = currentVideo();
+    wasPlayingWhenUnfocused = !!(v && !v.paused && !v.ended);
+  }
+
+  function resumeIfBackgrounded() {
+    if (document.hasFocus()) return;        // au premier plan : ne pas interférer
+    if (!wasPlayingWhenUnfocused) return;   // était déjà en pause : respecter
+    const v = currentVideo();
+    if (v && v.paused && !v.ended) {
+      v.play().catch(function () { /* réessai au prochain tick */ });
+    }
+  }
+
+  function startBackgroundKeepAlive() {
+    // Mémorise l'état de lecture au moment où l'app perd le focus.
+    window.addEventListener('blur', noteFocusLoss, true);
+    // Réaction immédiate à toute mise en pause survenue hors focus.
+    document.addEventListener('pause', function (e) {
+      if (e && e.target && e.target.tagName === 'VIDEO') resumeIfBackgrounded();
+    }, true);
+    // Filet de sécurité : YouTube peut re-pauser à retardement.
+    setInterval(resumeIfBackgrounded, 1000);
+  }
+
+  // =========================================================================
   // 4. Canal natif : commandes venues de l'app Android
   // =========================================================================
 
@@ -397,30 +461,137 @@
    * fenêtre de l'Activity.
    */
   function setPipLayout(enabled) {
-    document.documentElement.classList.toggle('tubeguard-pip', enabled);
+    // La promotion CSS « plein écran noir » du lecteur pour la vignette PiP est
+    // désactivée : le PiP vidéo ne tient pas la lecture de toute façon, et une
+    // classe restée collée après une sortie de PiP ratée provoquait un écran
+    // noir au démarrage suivant. On se contente donc de RETIRER toute trace.
+    document.documentElement.classList.remove('tubeguard-pip');
   }
+
+  // ---- Anti-pause en PiP / arrière-plan --------------------------------
+  // Quand l'app est en miniature (PiP) ou écran éteint, le lecteur YouTube se
+  // remet en pause de lui-même (constaté : ~600 ms après un play, alors même
+  // que la session GeckoView est active et sans perte de focus audio). En PiP
+  // l'utilisateur n'a aucun bouton pause, donc toute pause y est non désirée :
+  // on relance la lecture dès qu'elle se coupe, tant que ce mode est actif.
+  let keepPlaying = false;
+  let guardedVideo = null;
+  let appPort = null;
+
+  function reportGuard(state, paused) {
+    try {
+      if (appPort) appPort.postMessage({ event: 'guard', state: state, paused: !!paused });
+    } catch (e) { /* ignoré */ }
+  }
+
+  function onGuardPause() {
+    if (!keepPlaying) return;
+    const v = guardedVideo;
+    if (!v || v.ended) return;
+    reportGuard('pause-detected', true);
+    setTimeout(function () {
+      if (keepPlaying && v === currentVideo() && v.paused && !v.ended) {
+        v.play().then(
+          function () { reportGuard('resume-ok', false); },
+          function () { reportGuard('resume-FAILED', true); }
+        );
+      }
+    }, 60);
+  }
+
+  function armPlaybackGuard(on) {
+    keepPlaying = on;
+    const v = currentVideo();
+    reportGuard(on ? 'armed' : 'disarmed', v ? v.paused : null);
+    if (guardedVideo && guardedVideo !== v) {
+      guardedVideo.removeEventListener('pause', onGuardPause);
+      guardedVideo = null;
+    }
+    if (on && v) {
+      if (guardedVideo !== v) {
+        v.addEventListener('pause', onGuardPause);
+        guardedVideo = v;
+      }
+      if (v.paused && !v.ended) {
+        v.play().then(
+          function () { reportGuard('initial-play-ok', false); },
+          function () { reportGuard('initial-play-FAILED', true); }
+        );
+      }
+    }
+  }
+
+  // Le canal natif est FRAGILE à établir : selon que la page se charge avant ou
+  // après l'enregistrement du délégué côté Kotlin, le premier connectNative peut
+  // n'être jamais délivré (onConnect manqué). Et comme m.youtube.com est une SPA,
+  // le content script n'est pas réinjecté d'une vidéo à l'autre. On rend donc la
+  // connexion résiliente : on (re)tente jusqu'à obtenir un port vivant, et on
+  // réessaie à chaque navigation.
+  let connectAttempts = 0;
 
   function connectToApp() {
     // Uniquement depuis le document de tête : sinon chaque iframe (chat en
     // direct, intégrations…) ouvrirait un port concurrent et volerait le canal.
     if (window.top !== window) return;
+    if (appPort) return; // déjà connecté
 
     let port;
     try {
       port = browser.runtime.connectNative('browser');
     } catch (e) {
-      return; // l'app n'écoute pas : sans conséquence
+      // connectNative indisponible : on retente un peu plus tard.
+      scheduleReconnect();
+      return;
     }
 
+    let acked = false;
+
     port.onMessage.addListener((msg) => {
+      acked = true; // on a reçu quelque chose : le port est bien vivant
       if (!msg) return;
-      if (msg.cmd === 'enterVideoFullscreen') setPipLayout(true);
-      if (msg.cmd === 'exitVideoFullscreen') setPipLayout(false);
+      if (msg.cmd === 'enterVideoFullscreen') { setPipLayout(true); armPlaybackGuard(true); }
+      if (msg.cmd === 'exitVideoFullscreen') { setPipLayout(false); armPlaybackGuard(false); }
+      if (msg.cmd === 'keepPlaying') armPlaybackGuard(true);
+      if (msg.cmd === 'releasePlaying') armPlaybackGuard(false);
     });
+
+    port.onDisconnect.addListener(() => {
+      if (appPort === port) appPort = null;
+      scheduleReconnect();
+    });
+
+    appPort = port;
 
     try {
       port.postMessage({ event: 'ready', url: location.href });
-    } catch (e) { /* ignoré */ }
+    } catch (e) {
+      appPort = null;
+      scheduleReconnect();
+      return;
+    }
+
+    // Si dans 2 s on n'a rien reçu en retour, c'est probablement un onConnect
+    // manqué côté Kotlin (course au démarrage) : on jette ce port et on relance,
+    // ce qui redéclenche onConnect maintenant que le délégué est en place.
+    connectAttempts++;
+    if (connectAttempts <= 6) {
+      setTimeout(() => {
+        if (!acked) {
+          try { port.disconnect(); } catch (e) { /* ignoré */ }
+          appPort = null;
+          connectToApp();
+        }
+      }, 2000);
+    }
+  }
+
+  let reconnectTimer = null;
+  function scheduleReconnect() {
+    if (reconnectTimer || appPort) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectToApp();
+    }, 1500);
   }
 
   // =========================================================================
@@ -428,8 +599,10 @@
   // =========================================================================
 
   function boot() {
+    document.documentElement.classList.remove('tubeguard-pip');
     startAdWatcher();
     applyCosmeticFilters();
+    startBackgroundKeepAlive();
     connectToApp();
 
     // m.youtube.com est une SPA : elle navigue sans recharger la page, donc le
@@ -437,8 +610,12 @@
     // cosmétique par domaine (ytblock-cosmetic) reste valable telle quelle, mais
     // on force un skipAdIfPresent() immédiat à chaque navigation pour attraper
     // une éventuelle pré-roll sans attendre le prochain tick de 400 ms.
-    window.addEventListener('yt-navigate-finish', skipAdIfPresent, true);
-    document.addEventListener('yt-navigate-finish', skipAdIfPresent, true);
+    const onNavigate = function () {
+      skipAdIfPresent();
+      connectToApp(); // reconnecte le canal natif si besoin (SPA)
+    };
+    window.addEventListener('yt-navigate-finish', onNavigate, true);
+    document.addEventListener('yt-navigate-finish', onNavigate, true);
 
     console.log(LOG, 'content script actif sur', location.href);
   }

@@ -41,6 +41,24 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
 
     private var isInPip = false
 
+    /** true tant que l'app est en arrière-plan avec une lecture à maintenir. */
+    private var backgroundPlaybackActive = false
+    private val bgHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val keepActiveTick = object : Runnable {
+        override fun run() {
+            if (!backgroundPlaybackActive) return
+            if (MediaBridge.isActive && MediaBridge.isPlaying) {
+                keepSessionActive("bgTick")
+                // On repousse la « pression mémoire » différée que GeckoView
+                // programme quand la vue est inactive : sans ça, le son finit
+                // par se couper au bout de quelques dizaines de secondes.
+                bgHandler.postDelayed(this, 3000)
+            } else {
+                backgroundPlaybackActive = false
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Cycle de vie
     // ------------------------------------------------------------------
@@ -95,6 +113,12 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
     override fun onResume() {
         super.onResume()
         applyImmersiveMode()
+        // Retour au premier plan : on stoppe la ré-affirmation d'arrière-plan.
+        backgroundPlaybackActive = false
+        bgHandler.removeCallbacks(keepActiveTick)
+        // De retour au premier plan (hors PiP) : on rend à l'utilisateur le
+        // contrôle normal de la pause.
+        if (!isInPip) NativeBridge.releasePlaying()
     }
 
     override fun onStop() {
@@ -102,6 +126,32 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
         // On sauvegarde ici plutôt que dans onDestroy : onDestroy n'est pas
         // garanti d'être appelé si le système tue le process.
         GeckoEngine.saveState(this)
+
+        // Écran éteint / app en arrière-plan pendant une lecture : GeckoView
+        // désactive sa session (surface détruite) et suspendrait l'audio. Si on
+        // est en train de jouer, on ré-force la session active pour garder le
+        // son. Sans lecture en cours, on laisse GeckoView économiser la mémoire.
+        if (MediaBridge.isActive && MediaBridge.isPlaying) {
+            keepSessionActive("onStop(playing)")
+            NativeBridge.keepPlaying()
+            // Ré-affirmation périodique tant qu'on reste en arrière-plan.
+            backgroundPlaybackActive = true
+            bgHandler.removeCallbacks(keepActiveTick)
+            bgHandler.postDelayed(keepActiveTick, 3000)
+        }
+    }
+
+    /**
+     * Force la session GeckoView à rester active, pour que le moteur continue de
+     * décoder l'audio/vidéo alors que la vue n'est plus « visible » au sens
+     * Android (PiP, écran éteint). Contrecarre le setActive(false) automatique
+     * que GeckoView déclenche sur changement de surface/visibilité.
+     */
+    private fun keepSessionActive(reason: String) {
+        runCatching {
+            session.setActive(true)
+            Log.i(TAG, "session forcée active ($reason)")
+        }.onFailure { Log.w(TAG, "setActive(true) impossible ($reason)", it) }
     }
 
     override fun onDestroy() {
@@ -205,14 +255,24 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
             }
 
             override fun onPlay(session: GeckoSession, mediaSession: MediaSession) {
+                Log.i(TAG, "media onPlay (pip=$isInPip)")
                 MediaBridge.onPlaybackStateChanged(true)
+                // Une lecture qui redémarre alors qu'on est en PiP/arrière-plan
+                // doit garder la session active, sinon GeckoView la re-suspend.
+                if (isInPip) keepSessionActive("onPlay")
             }
 
             override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
+                Log.i(TAG, "media onPause (pip=$isInPip)")
                 MediaBridge.onPlaybackStateChanged(false)
+                // NB : on ne relance PLUS automatiquement en PiP. La relance
+                // (play/pause) provoquait une saccade sans jamais tenir, car la
+                // pause revient en boucle (limite GeckoView/lecteur mobile en
+                // PiP). On laisse donc la pause s'appliquer proprement.
             }
 
             override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
+                Log.i(TAG, "media onStop (pip=$isInPip)")
                 MediaBridge.onPlaybackStateChanged(false)
             }
 
@@ -321,6 +381,8 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         isInPip = isInPictureInPictureMode
 
+        Log.i(TAG, "PiP mode changed -> $isInPictureInPictureMode")
+
         if (isInPictureInPictureMode) {
             // Entrée en PiP, quel qu'en soit le déclencheur (appel manuel OU
             // auto-enter système d'Android 12+). C'est le seul endroit commun
@@ -330,6 +392,16 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
                 NativeBridge.requestVideoFullscreen()
                 fullscreenForcedForPip = true
             }
+
+            // ⚠️ Cœur du correctif « la vidéo s'arrête en PiP ».
+            // GeckoView bascule sa session en inactive quand la visibilité de la
+            // vue change (transition vers PiP), et setActive(false) SUSPEND le
+            // média. On ré-force donc la session active, et on le refait avec un
+            // léger délai pour gagner la course contre le callback de surface de
+            // GeckoView qui, lui, la remet à false pendant la transition.
+            keepSessionActive("enterPip")
+            binding.geckoView.postDelayed({ keepSessionActive("enterPip+600ms") }, 600)
+            binding.geckoView.postDelayed({ keepSessionActive("enterPip+1500ms") }, 1500)
         } else {
             // Retour en plein écran d'app : on annule le plein écran HTML si
             // c'est nous qui l'avions forcé.
