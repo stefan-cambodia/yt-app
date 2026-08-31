@@ -578,6 +578,17 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
 
 ---
 
+## Licence
+
+TubeGuard est distribué sous **GNU General Public License v3.0** — voir le
+fichier [`LICENSE`](LICENSE). Ce choix est cohérent avec les composants de
+l'écosystème du blocage de pub : uBlock Origin (GPLv3, si tu actives le Plan A)
+et EasyList (GPLv3 / CC BY-SA 3.0, dont un extrait est embarqué). En pratique,
+pour un usage personnel sans redistribution, la licence n'impose aucune
+contrainte ; elle prend son sens si tu partages l'APK ou une version modifiée.
+
+---
+
 ## 10. Aspects légaux
 
 À lire, ce n'est pas une formalité.
