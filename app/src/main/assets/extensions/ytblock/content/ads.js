@@ -425,11 +425,27 @@
       const v = currentVideo();
       const r = v ? v.getBoundingClientRect() : null;
       const de = document.documentElement;
+      const rect = function (el) {
+        const b = el.getBoundingClientRect();
+        return Math.round(b.left) + ',' + Math.round(b.top) + ' ' + Math.round(b.width) + 'x' + Math.round(b.height);
+      };
+      const name = function (el) {
+        return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') +
+          (el.classList && el.classList.length ? '.' + Array.from(el.classList).slice(0, 2).join('.') : '');
+      };
       console.error('[YTBLOCK] géométrie PiP : inner=' + (viewport.isShrunk ? 'gelé ' : '') + viewport.refW + 'x' + viewport.refH +
         ' client=' + de.clientWidth + 'x' + de.clientHeight +
         ' visual=' + (vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + '@' + vv.scale.toFixed(2) : '?') +
         ' video=' + (r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : 'aucune') +
         ' classe=' + de.classList.contains('tubeguard-pip'));
+      // Chaîne d'ancêtres de la vidéo et élément visible en haut à droite :
+      // dit ce qui recouvre la vignette et où la vidéo se retrouve réellement.
+      const chain = [];
+      for (let el = v, i = 0; el && el !== de && i < 10; el = el.parentElement, i++) {
+        chain.push(name(el) + '[' + rect(el) + ']');
+      }
+      const top = document.elementsFromPoint(de.clientWidth - 10, 10).slice(0, 3).map(name);
+      console.error('[YTBLOCK] ancêtres vidéo : ' + chain.join(' < ') + ' | haut-droite : ' + top.join(' > '));
     } catch (e) { /* ignoré */ }
   }
 

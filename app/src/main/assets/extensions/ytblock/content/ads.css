@@ -114,10 +114,44 @@ html.tubeguard-pip .html5-video-player {
   background: #000 !important;
 }
 
-html.tubeguard-pip video {
-  width: 100% !important;
-  height: 100% !important;
+/*
+ * La vidéo elle-même est promue en position fixe sur tout le viewport : ses
+ * ancêtres intermédiaires (conteneurs du lecteur mobile) n'ont pas de hauteur
+ * exploitable, et « height: 100% » y donnait une vidéo de 0 px de haut
+ * (constaté sur appareil : 208x0 dans une fenêtre de 208x117).
+ */
+html.tubeguard-pip video.html5-main-video,
+html.tubeguard-pip #movie_player video {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  transform: none !important;
   object-fit: contain !important;
+  background: #000 !important;
+  z-index: 2147483647 !important;
+}
+
+/*
+ * Le lecteur vit dans un contexte d'empilement inférieur à celui de la barre
+ * du haut de YouTube (constaté : le bouton avatar du masthead reste peint
+ * PAR-DESSUS la vidéo malgré un z-index maximal). On ne cherche donc pas à
+ * passer devant : on rend invisible, tant que dure le PiP, tout élément de
+ * premier niveau qui ne contient pas la vidéo principale. visibility plutôt
+ * que display : aucune modification de mise en page, donc rien que YouTube
+ * puisse détecter et qui le pousse à réagir.
+ */
+html.tubeguard-pip body > *:not(:has(video.html5-main-video)),
+html.tubeguard-pip ytm-app > *:not(:has(video.html5-main-video)) {
+  visibility: hidden !important;
+}
+
+html.tubeguard-pip #player-container-id {
+  z-index: 2147483647 !important;
 }
 
 /* Pas de contrôles ni de titre dans la vignette. */

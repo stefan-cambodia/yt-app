@@ -33,7 +33,7 @@ YouTube et n'a pas vocation à être publié.
 | Bouton retour Android → historique GeckoView | `MainActivity.setupBackNavigation()` |
 | Session persistante (cookies, compte Google, onglet courant) | `GeckoEngine` (profil Gecko + `SessionState` sérialisé) |
 | Interception des liens `youtube.com` / `youtu.be` / `m.youtube.com` | `AndroidManifest.xml` (intent-filters) + `YouTubeLinks.normalize()` |
-| Picture-in-Picture natif (miniature, lecture maintenue — voir Limites) | `MainActivity.enterPip()`, `ads.js` (`installPauseInterceptor`, `setPipMode`) |
+| Picture-in-Picture natif (vignette cadrée sur la vidéo, lecture maintenue) | `MainActivity.enterPip()`, `ads.js` (`installPauseInterceptor`, `setPipMode`) |
 | Audio en arrière-plan écran éteint (MediaSession + wake lock) | `PlaybackService`, `MediaBridge` |
 | Icône et nom personnalisés, sans marque YouTube | `res/drawable/ic_launcher_foreground.xml`, `strings.xml` |
 | Blocage de pub | `AdBlock.kt` + `assets/extensions/ytblock/` |
@@ -578,10 +578,17 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
     mobile par défaut (980 px CSS) puis applique le `<meta viewport>` (~380 px)
     — ce rétrécissement ressemblait à un PiP. Le détecteur n'est donc armé
     qu'une fois qu'une vidéo a joué.
-  - **Reste à faire : le contenu de la vignette.** Elle montre encore le coin
-    de la page plutôt que la seule vidéo (la promotion CSS ne cadre pas
-    correctement dans la fenêtre réduite). Une ligne `[YTBLOCK] géométrie PiP`
-    est tracée 1,5 s après chaque entrée en PiP pour ajuster ça.
+  - **Contenu de la vignette : la vidéo seule, plein cadre** (validé). Deux
+    pièges résolus avec la ligne `[YTBLOCK] géométrie PiP` (tracée 1,5 s après
+    chaque entrée en PiP, avec la chaîne d'ancêtres de la vidéo) : `height:
+    100%` sur la vidéo donnait 0 px car ses conteneurs intermédiaires n'ont pas
+    de hauteur — la vidéo est donc promue elle-même en `position: fixed` sur
+    tout le viewport ; et la barre du haut de YouTube vit dans un contexte
+    d'empilement supérieur à celui du lecteur, donc aucun `z-index` ne passe
+    devant — tout élément de premier niveau ne contenant pas la vidéo est rendu
+    `visibility: hidden` pendant le PiP (`:has()`, sans changement de mise en
+    page). Le retour en plein écran par le bouton « agrandir » de la vignette
+    restaure la page normale.
   - Diagnostic : `adb logcat | grep -E "YTBLOCK|GUARD:"`. Les `console.error`
     du content script apparaissent sous le tag `Isolated Web Content` du
     process de contenu ; la télémétrie `GUARD:` passe par le canal natif ou,
@@ -610,9 +617,8 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
 - **Autoplay** : Gecko peut bloquer le démarrage automatique de la vidéo
   suivante. Si ça te gêne, active `aboutConfigEnabled` en release et passe
   `media.autoplay.default` à `0` via `about:config`.
-- **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — la lecture
-  est maintenue (validé sur appareil) ; la vignette ne cadre pas encore la
-  seule vidéo.
+- **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — lecture
+  maintenue et vignette cadrée sur la vidéo, validés sur appareil.
 - **Pas de sauvegarde** : `allowBackup="false"` volontairement — le profil Gecko
   contient tes cookies de session Google, on ne veut pas qu'ils partent sur
   Google Drive. Corollaire : changer de téléphone = se reconnecter.
