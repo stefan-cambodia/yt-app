@@ -88,7 +88,12 @@ object NativeBridge {
         val json = message as? JSONObject ?: return
         when (json.optString("event")) {
             "adSkipped" -> Log.d(TAG, "Coupure pub sautée dans le lecteur")
-            "ready" -> Log.i(TAG, "Content script prêt sur ${json.optString("url")}")
+            "ready" -> {
+                Log.i(TAG, "Content script prêt sur ${json.optString("url")}")
+                // Accusé de réception : le content script jette tout port resté
+                // muet 2 s (onConnect manqué côté Kotlin) et se reconnecte.
+                send("ack")
+            }
             "guard" -> Log.i(TAG, "GUARD: ${json.optString("state")} (paused=${json.optBoolean("paused")})")
         }
     }

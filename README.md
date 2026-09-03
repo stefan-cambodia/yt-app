@@ -571,12 +571,29 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
   - Mécanisme autonome corrigé au passage : le « gobeur » du `blur` de fenêtre
     empêchait l'écouteur qui mémorise l'état de lecture de tourner, si bien que
     la règle « pas de focus + jouait → relancer » ne s'appliquait jamais.
-  - ⚠️ **À valider sur appareil** : ce mécanisme n'a pas encore été testé sur
-    le Galaxy A56. Si la vidéo se met quand même en pause en PiP, chercher
-    `[YTBLOCK]` et `GUARD:` dans logcat : la pile d'appels d'un `pause()`
-    ignoré, ou l'absence de trace (pause purement native), dit où chercher.
+  - **Validé sur le Galaxy A56 (Android 16)** : la vidéo continue en vignette
+    (lecteur audio actif côté système, aucune tentative de pause de YouTube
+    dans la télémétrie), pause et reprise depuis les contrôles média
+    fonctionnent. Piège rencontré : au chargement, Gecko part de son viewport
+    mobile par défaut (980 px CSS) puis applique le `<meta viewport>` (~380 px)
+    — ce rétrécissement ressemblait à un PiP. Le détecteur n'est donc armé
+    qu'une fois qu'une vidéo a joué.
+  - **Reste à faire : le contenu de la vignette.** Elle montre encore le coin
+    de la page plutôt que la seule vidéo (la promotion CSS ne cadre pas
+    correctement dans la fenêtre réduite). Une ligne `[YTBLOCK] géométrie PiP`
+    est tracée 1,5 s après chaque entrée en PiP pour ajuster ça.
+  - Diagnostic : `adb logcat | grep -E "YTBLOCK|GUARD:"`. Les `console.error`
+    du content script apparaissent sous le tag `Isolated Web Content` du
+    process de contenu ; la télémétrie `GUARD:` passe par le canal natif ou,
+    sans port, par `sendNativeMessage`.
 
 ### Le reste
+
+- **Process de contenu tué en arrière-plan** : Android l'a fait sur l'appareil
+  (« excessive cpu » après ~5 min gelé). GeckoView considère alors la session
+  comme fermée ; `MainActivity.recoverContentProcess()` la rouvre avec
+  `open()` avant de restaurer l'onglet, sinon l'app restait sur une page
+  blanche jusqu'au prochain démarrage.
 
 - **Plan A quasi condamné** — voir la section 3. Le repli automatique
   (`PLAN_A_THEN_B`) existe précisément pour ça.
@@ -594,7 +611,8 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
   suivante. Si ça te gêne, active `aboutConfigEnabled` en release et passe
   `media.autoplay.default` à `0` via `about:config`.
 - **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — la lecture
-  est maintenue en bloquant les `pause()` du lecteur, à valider sur appareil.
+  est maintenue (validé sur appareil) ; la vignette ne cadre pas encore la
+  seule vidéo.
 - **Pas de sauvegarde** : `allowBackup="false"` volontairement — le profil Gecko
   contient tes cookies de session Google, on ne veut pas qu'ils partent sur
   Google Drive. Corollaire : changer de téléphone = se reconnecter.

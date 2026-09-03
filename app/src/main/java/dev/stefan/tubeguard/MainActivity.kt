@@ -474,6 +474,14 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
      * aucun état n'est disponible.
      */
     private fun recoverContentProcess(session: GeckoSession) {
+        // Après onCrash/onKill, GeckoView considère la session comme FERMÉE :
+        // sans open(), restoreState/loadUri sont ignorés et l'app reste sur
+        // une page blanche jusqu'au prochain démarrage (constaté sur appareil,
+        // après un kill « excessive cpu » en arrière-plan).
+        if (!session.isOpen) {
+            runCatching { session.open(GeckoEngine.runtime(this)) }
+                .onFailure { Log.e(TAG, "Réouverture de la session impossible", it) }
+        }
         val state = GeckoEngine.lastKnownState()
         if (state != null) session.restoreState(state) else session.loadUri(GeckoEngine.HOME_URL)
     }

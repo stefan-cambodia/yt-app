@@ -158,6 +158,7 @@
       installPipResizeGuard(win);
       // --- 1e. Interception de pause() ---------------------------------
       installPauseInterceptor(win);
+      reportGuard('hooks-installed', null);
     }
   }
 
@@ -182,12 +183,14 @@
 
     // Accesseurs natifs résolus UNE fois : nos propres getters les masquent
     // ensuite sur `win`, et la mise en page de YouTube les lit très souvent.
+    // NB : Window est une interface [Global], ses attributs (innerWidth…) sont
+    // des propriétés propres de l'objet window, PAS de Window.prototype.
     const nativeGet = {};
     function realDim(name) { return nativeGet[name].call(win); }
 
     try {
       for (const name of DIMENSIONS) {
-        nativeGet[name] = Object.getOwnPropertyDescriptor(win.Window.prototype, name).get;
+        nativeGet[name] = Object.getOwnPropertyDescriptor(win, name).get;
       }
       viewport.refW = realDim('innerWidth');
       viewport.refH = realDim('innerHeight');
@@ -219,8 +222,12 @@
     window.addEventListener('resize', function (event) {
       const w = realDim('innerWidth');
       const h = realDim('innerHeight');
-      if (viewport.refW * viewport.refH <= 0) {
-        // Première taille connue (le viewport n'était pas encore établi).
+      // Tant qu'aucune vidéo n'a joué, on ne fait que suivre la taille : Gecko
+      // démarre sur son viewport mobile par défaut (980 px CSS de large) puis
+      // applique le <meta viewport> de YouTube (~380 px). Ce rétrécissement au
+      // chargement ressemble à un PiP (constaté : 980x2123 → 378x819) mais n'en
+      // est pas un — un vrai PiP suppose une lecture en cours.
+      if ((!keep.hasPlayed && !keep.pip) || viewport.refW * viewport.refH <= 0) {
         viewport.refW = w;
         viewport.refH = h;
         return;
@@ -372,10 +379,14 @@
     pip: false,
     userPaused: false,
     wasPlayingWhenUnfocused: false,
+    hasPlayed: false, // une vidéo a déjà joué dans cette page
   };
 
   /** Géométrie du viewport, renseignée par installPipResizeGuard. */
   const viewport = { refW: 0, refH: 0, isShrunk: null };
+
+  /** Port vers l'app Android (section 4), null tant qu'il n'est pas établi. */
+  let appPort = null;
 
   function shouldKeepPlaying() {
     if (keep.userPaused) return false;
@@ -401,7 +412,25 @@
     keep.pip = on;
     document.documentElement.classList.toggle('tubeguard-pip', on);
     reportGuard('pip-' + (on ? 'on' : 'off') + ':' + source, null);
-    if (on) resumeIfNeeded('pip:' + source);
+    if (on) {
+      resumeIfNeeded('pip:' + source);
+      setTimeout(logPipGeometry, 1500);
+    }
+  }
+
+  /** Une ligne de diagnostic par entrée en PiP : la géométrie réelle vue par la page. */
+  function logPipGeometry() {
+    try {
+      const vv = window.visualViewport;
+      const v = currentVideo();
+      const r = v ? v.getBoundingClientRect() : null;
+      const de = document.documentElement;
+      console.error('[YTBLOCK] géométrie PiP : inner=' + (viewport.isShrunk ? 'gelé ' : '') + viewport.refW + 'x' + viewport.refH +
+        ' client=' + de.clientWidth + 'x' + de.clientHeight +
+        ' visual=' + (vv ? Math.round(vv.width) + 'x' + Math.round(vv.height) + '@' + vv.scale.toFixed(2) : '?') +
+        ' video=' + (r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : 'aucune') +
+        ' classe=' + de.classList.contains('tubeguard-pip'));
+    } catch (e) { /* ignoré */ }
   }
 
   installPageHooks();
@@ -648,7 +677,10 @@
     // utilisateur : même sans canal natif, un « play » depuis la notification
     // remet le maintien en service.
     document.addEventListener('play', function (e) {
-      if (e && e.target && e.target.tagName === 'VIDEO') keep.userPaused = false;
+      if (e && e.target && e.target.tagName === 'VIDEO') {
+        keep.userPaused = false;
+        keep.hasPlayed = true;
+      }
     }, true);
     // Filet de sécurité : YouTube peut re-pauser à retardement ; et si la
     // fenêtre a retrouvé sa taille sans que le resize de sortie nous soit
@@ -663,11 +695,21 @@
   // 4. Canal natif : commandes venues de l'app Android
   // =========================================================================
 
-  let appPort = null;
-
+  /**
+   * Télémétrie vers l'app (tag logcat TubeGuard.Bridge, « GUARD: … »). Sans
+   * port, on passe par sendNativeMessage : un envoi ponctuel qui ne dépend pas
+   * de la course d'établissement du port. (La console du content script est
+   * aussi visible dans logcat, sous le tag « Isolated Web Content » du process
+   * de contenu, mais seulement pour console.error.)
+   */
   function reportGuard(state, paused) {
+    const msg = { event: 'guard', state: state, paused: !!paused, url: location.href };
     try {
-      if (appPort) appPort.postMessage({ event: 'guard', state: state, paused: !!paused });
+      if (appPort) {
+        appPort.postMessage(msg);
+      } else if (window.top === window) {
+        browser.runtime.sendNativeMessage('browser', msg).catch(function () { /* ignoré */ });
+      }
     } catch (e) { /* ignoré */ }
   }
 
@@ -755,6 +797,7 @@
     applyCosmeticFilters();
     startPlaybackKeeper();
     connectToApp();
+    reportGuard('boot', null);
 
     // m.youtube.com est une SPA : elle navigue sans recharger la page, donc le
     // content script n'est PAS réinjecté d'une vidéo à l'autre. La feuille

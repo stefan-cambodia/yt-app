@@ -3,7 +3,7 @@
 
   "name": "TubeGuard Blocker",
   "short_name": "ytblock",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Blocage des publicites YouTube : filtrage reseau facon Adblock Plus + filtres cosmetiques + saut des coupures dans le lecteur.",
 
   "browser_specific_settings": {
