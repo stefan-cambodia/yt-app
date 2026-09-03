@@ -33,7 +33,7 @@ YouTube et n'a pas vocation à être publié.
 | Bouton retour Android → historique GeckoView | `MainActivity.setupBackNavigation()` |
 | Session persistante (cookies, compte Google, onglet courant) | `GeckoEngine` (profil Gecko + `SessionState` sérialisé) |
 | Interception des liens `youtube.com` / `youtu.be` / `m.youtube.com` | `AndroidManifest.xml` (intent-filters) + `YouTubeLinks.normalize()` |
-| Picture-in-Picture natif (miniature ; la vidéo s'y met en pause — voir Limites) | `MainActivity.enterPip()` |
+| Picture-in-Picture natif (miniature, lecture maintenue — voir Limites) | `MainActivity.enterPip()`, `ads.js` (`installPauseInterceptor`, `setPipMode`) |
 | Audio en arrière-plan écran éteint (MediaSession + wake lock) | `PlaybackService`, `MediaBridge` |
 | Icône et nom personnalisés, sans marque YouTube | `res/drawable/ic_launcher_foreground.xml`, `strings.xml` |
 | Blocage de pub | `AdBlock.kt` + `assets/extensions/ytblock/` |
@@ -539,16 +539,42 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
   évènements `visibilitychange` / `blur` de la fenêtre. Ces noms d'API sont
   stables, mais si une future version du lecteur mobile trouve un autre signal,
   la lecture pourra à nouveau se couper en arrière-plan.
-- **Picture-in-Picture vidéo : NE tient PAS la lecture.** La vidéo se met en
-  pause dès l'entrée en miniature. En cause : même visibilité et focus spoofés,
-  le lecteur mobile YouTube se remet en pause en boucle en PiP (probablement lié
-  au redimensionnement de la fenêtre), et une relance native lutte sans jamais
-  tenir — ce qui produisait une saccade. Cette relance a été **retirée** : le
-  PiP se met donc en pause **proprement**. C'est une **limite dure de GeckoView**
-  pour ce cas ; la voie fiable pour écouter en multitâche est l'audio en
-  arrière-plan ci-dessus. La promotion CSS qui devait cadrer la vignette sur la
-  seule vidéo a aussi été désactivée (elle provoquait un écran noir au démarrage
-  quand sa classe restait collée après une sortie de PiP).
+- **Picture-in-Picture vidéo : la pause est bloquée à la source.** Historique :
+  même visibilité et focus spoofés, le lecteur mobile YouTube se remettait en
+  pause en boucle en PiP, et toute relance (native puis JS) luttait sans jamais
+  tenir — d'où une saccade. Toutes ces approches *réagissaient* à la pause.
+  Le content script prend désormais le problème en amont : tant que la lecture
+  doit être maintenue (PiP, arrière-plan), il **remplace
+  `HTMLMediaElement.prototype.pause` dans la page** et ignore les appels que le
+  code de YouTube fait sur la vidéo principale. Il n'y a plus de pause à
+  rattraper, donc plus de saccade. Une relance sur évènement `pause` reste en
+  filet de sécurité pour les pauses que Gecko déclenche lui-même (perte de
+  focus audio…). Les premiers `pause()` ignorés sont tracés dans logcat **avec
+  la pile d'appels** (`[YTBLOCK] pause() ignoré`) : c'est ce qui permet de voir
+  quel code de YouTube est en cause si le comportement change.
+  - Le mode PiP est connu de deux façons redondantes : l'app l'annonce par le
+    canal natif (`cmd pip`), et le content script le déduit seul d'un
+    **rétrécissement de la fenêtre** (surface < 30 % de la dernière taille
+    normale ; seuil proportionnel, pas absolu — en portrait la fenêtre ne fait
+    que ~400 px CSS de large). En PiP il gèle aussi `innerWidth`/`innerHeight`
+    et avale les `resize` pour que la logique responsive de YouTube ne voie pas
+    la fenêtre minuscule.
+  - La promotion CSS qui cadre la vignette sur la seule vidéo est **réactivée**
+    (`html.tubeguard-pip`). Elle avait été retirée parce qu'une classe restée
+    collée donnait un écran noir : la classe est maintenant retirée par toutes
+    les voies de sortie (resize, canal natif, tick de sécurité, démarrage).
+  - **Pause voulue par l'utilisateur** (notification, casque, contrôles de la
+    vignette sur Android 12+) : l'app l'annonce au content script
+    (`cmd userPause`) avant de piloter la MediaSession, et elle est honorée.
+    Si le canal natif n'est pas établi, cette pause peut être ignorée en PiP —
+    c'est la seule dégradation connue sans canal.
+  - Mécanisme autonome corrigé au passage : le « gobeur » du `blur` de fenêtre
+    empêchait l'écouteur qui mémorise l'état de lecture de tourner, si bien que
+    la règle « pas de focus + jouait → relancer » ne s'appliquait jamais.
+  - ⚠️ **À valider sur appareil** : ce mécanisme n'a pas encore été testé sur
+    le Galaxy A56. Si la vidéo se met quand même en pause en PiP, chercher
+    `[YTBLOCK]` et `GUARD:` dans logcat : la pile d'appels d'un `pause()`
+    ignoré, ou l'absence de trace (pause purement native), dit où chercher.
 
 ### Le reste
 
@@ -567,8 +593,8 @@ Comportement réel constaté et corrigé sur l'appareil, à connaître :
 - **Autoplay** : Gecko peut bloquer le démarrage automatique de la vidéo
   suivante. Si ça te gêne, active `aboutConfigEnabled` en release et passe
   `media.autoplay.default` à `0` via `about:config`.
-- **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — le PiP vidéo
-  se met en pause (limite GeckoView assumée), la promotion CSS a été désactivée.
+- **Picture-in-Picture** : voir la sous-section dédiée ci-dessus — la lecture
+  est maintenue en bloquant les `pause()` du lecteur, à valider sur appareil.
 - **Pas de sauvegarde** : `allowBackup="false"` volontairement — le profil Gecko
   contient tes cookies de session Google, on ne veut pas qu'ils partent sur
   Google Drive. Corollaire : changer de téléphone = se reconnecter.

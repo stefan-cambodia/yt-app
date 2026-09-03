@@ -151,6 +151,142 @@
 
     // --- 1c. Lecture en arrière-plan -----------------------------------
     keepPlayingInBackground(win);
+    // Les deux suivants ne concernent que le document de tête : une iframe
+    // (chat en direct, intégration) qui se replie ne doit pas passer « en PiP ».
+    if (window.top === window) {
+      // --- 1d. Contre-mesure « redimensionnement PiP » -----------------
+      installPipResizeGuard(win);
+      // --- 1e. Interception de pause() ---------------------------------
+      installPauseInterceptor(win);
+    }
+  }
+
+  /**
+   * Angle « redimensionnement » pour le Picture-in-Picture.
+   *
+   * En PiP la fenêtre GeckoView rétrécit brutalement ; le lecteur mobile réagit
+   * à ce `resize` (bascule miniplayer / détection hors-écran). Sans dépendre du
+   * canal natif, on prend le rétrécissement lui-même comme signal PiP : la
+   * surface du viewport tombe sous SHRINK_ENTER fois la dernière taille normale
+   * connue. C'est une proportion, pas un seuil absolu — en portrait un téléphone
+   * ne fait que ~400 px CSS de large, un seuil fixe se déclencherait à la
+   * moindre apparition du clavier. Tant que le mode dure : on gèle les
+   * dimensions rapportées (innerWidth/Height, outerWidth/Height) à la dernière
+   * taille normale et on avale les `resize` avant que YouTube ne les reçoive.
+   * Le mode lui-même est partagé avec le signal natif via setPipMode().
+   */
+  function installPipResizeGuard(win) {
+    const SHRINK_ENTER = 0.3; // surface < 30 % de la référence : on est en PiP
+    const SHRINK_EXIT = 0.5;  // surface ≥ 50 % de la référence : taille normale retrouvée
+    const DIMENSIONS = ['innerWidth', 'innerHeight', 'outerWidth', 'outerHeight'];
+
+    // Accesseurs natifs résolus UNE fois : nos propres getters les masquent
+    // ensuite sur `win`, et la mise en page de YouTube les lit très souvent.
+    const nativeGet = {};
+    function realDim(name) { return nativeGet[name].call(win); }
+
+    try {
+      for (const name of DIMENSIONS) {
+        nativeGet[name] = Object.getOwnPropertyDescriptor(win.Window.prototype, name).get;
+      }
+      viewport.refW = realDim('innerWidth');
+      viewport.refH = realDim('innerHeight');
+      for (const name of DIMENSIONS) {
+        const native = nativeGet[name];
+        const isWidth = name.endsWith('Width');
+        Object.defineProperty(win, name, {
+          configurable: true,
+          get: exportFunction(function () {
+            return keep.pip ? (isWidth ? viewport.refW : viewport.refH) : native.call(win);
+          }, win),
+        });
+      }
+    } catch (e) {
+      console.warn(LOG, 'spoof dimensions impossible', e);
+      return;
+    }
+
+    // Hystérésis : le seuil de sortie est plus haut que celui d'entrée, pour ne
+    // pas osciller sur les resize intermédiaires de l'animation PiP.
+    viewport.isShrunk = function () {
+      const ref = viewport.refW * viewport.refH;
+      if (ref <= 0) return false;
+      const area = realDim('innerWidth') * realDim('innerHeight');
+      return area < ref * (keep.pip ? SHRINK_EXIT : SHRINK_ENTER);
+    };
+
+    // Détection du (dé)rétrécissement, en phase de capture donc AVANT YouTube.
+    window.addEventListener('resize', function (event) {
+      const w = realDim('innerWidth');
+      const h = realDim('innerHeight');
+      if (viewport.refW * viewport.refH <= 0) {
+        // Première taille connue (le viewport n'était pas encore établi).
+        viewport.refW = w;
+        viewport.refH = h;
+        return;
+      }
+      const shrunk = viewport.isShrunk();
+      if (shrunk && !keep.pip) {
+        console.error('[YTBLOCK] PiP resize détecté (' + w + 'x' + h + ') -> dimensions gelées ' + viewport.refW + 'x' + viewport.refH);
+        setPipMode(true, 'resize');
+      } else if (!shrunk && keep.pip) {
+        console.error('[YTBLOCK] sortie PiP resize (' + w + 'x' + h + ')');
+        setPipMode(false, 'resize');
+      }
+      if (keep.pip) {
+        event.stopImmediatePropagation(); // YouTube ne doit pas voir ce resize.
+      } else {
+        viewport.refW = w; // nouvelle taille normale de référence
+        viewport.refH = h;
+      }
+    }, true);
+  }
+
+  /**
+   * Interception de `HTMLMediaElement.prototype.pause` dans la page.
+   *
+   * Toutes les tentatives précédentes RÉAGISSAIENT à la pause (relance après
+   * coup), ce qui donnait une saccade sans jamais tenir : le lecteur re-pausait
+   * en boucle. Ici on prend le problème à la source : tant que la lecture doit
+   * être maintenue (PiP, arrière-plan — voir shouldKeepPlaying), un appel à
+   * pause() venant du code de la page sur la vidéo principale est simplement
+   * ignoré. Une pause voulue par l'utilisateur (notification, contrôles de la
+   * vignette PiP) passe par l'app, qui la signale (cmd userPause) : elle est
+   * alors honorée.
+   *
+   * Nos propres appels (currentVideo().pause() côté content script) passent par
+   * les X-rays, donc par la méthode native, jamais par le prototype de la page :
+   * ils ne sont pas bloqués.
+   *
+   * Les premiers appels ignorés sont tracés AVEC leur pile d'appels : c'est le
+   * seul moyen de savoir, sur l'appareil, quel code de YouTube met en pause.
+   */
+  function installPauseInterceptor(win) {
+    try {
+      const nativePause = HTMLMediaElement.prototype.pause; // méthode native, vue du content script
+      let ignored = 0;
+      win.HTMLMediaElement.prototype.pause = exportFunction(function () {
+        if (shouldKeepPlaying() && isMainVideo(this)) {
+          ignored++;
+          if (ignored <= 3 || ignored % 50 === 0) {
+            console.error('[YTBLOCK] pause() ignoré #' + ignored + ' (maintien de lecture)\n' + new Error().stack);
+          }
+          return undefined;
+        }
+        return nativePause.call(this);
+      }, win);
+      console.log(LOG, 'interception de pause() installée');
+    } catch (e) {
+      console.warn(LOG, 'interception de pause() impossible', e);
+    }
+  }
+
+  function isMainVideo(el) {
+    try {
+      return el === currentVideo() || (el.classList && el.classList.contains('html5-main-video'));
+    } catch (e) {
+      return false;
+    }
   }
 
   /**
@@ -203,12 +339,69 @@
     // casserait les formulaires).
     const swallowWindowOnly = function (event) {
       if (event.target === window || event.target === document) {
+        // Personne d'autre ne verra ce blur : on note l'état de lecture ici,
+        // avant de le gober (un écouteur posé plus tard ne tournerait jamais).
+        if (event.type === 'blur') noteFocusLoss();
         event.stopImmediatePropagation();
       }
     };
     for (const type of ['blur', 'pagehide']) {
       window.addEventListener(type, swallowWindowOnly, true);
     }
+  }
+
+  // =========================================================================
+  // 1f. Maintien de lecture : état partagé
+  // =========================================================================
+  //
+  // « La lecture doit-elle continuer malgré ce que YouTube veut faire ? »
+  // Plusieurs sources indépendantes répondent oui — aucune n'est fiable seule :
+  //   - keep.native : l'app Android l'a demandé par le canal natif (écran
+  //     éteint → cmd keepPlaying). Le canal est fragile à établir ;
+  //   - keep.pip    : mode Picture-in-Picture, posé par le canal natif (cmd pip)
+  //     OU déduit du rétrécissement de la fenêtre (installPipResizeGuard) ;
+  //   - focus perdu alors que la vidéo jouait : mécanisme autonome, sans aucun
+  //     message. document.hasFocus() n'est PAS spoofé côté content script (les
+  //     X-rays ignorent la propriété posée sur le document de la page), il
+  //     reflète la réalité : premier plan → true ; PiP, écran éteint, autre app
+  //     → false.
+  // Et une source dit non : keep.userPaused, pause explicite de l'utilisateur
+  // (notification, casque, contrôles de la vignette PiP), signalée par l'app.
+  const keep = {
+    native: false,
+    pip: false,
+    userPaused: false,
+    wasPlayingWhenUnfocused: false,
+  };
+
+  /** Géométrie du viewport, renseignée par installPipResizeGuard. */
+  const viewport = { refW: 0, refH: 0, isShrunk: null };
+
+  function shouldKeepPlaying() {
+    if (keep.userPaused) return false;
+    if (keep.native || keep.pip) return true;
+    return keep.wasPlayingWhenUnfocused && !document.hasFocus();
+  }
+
+  /** Mémorise l'état de lecture au moment où la fenêtre perd le focus. */
+  function noteFocusLoss() {
+    const v = currentVideo();
+    keep.wasPlayingWhenUnfocused = !!(v && !v.paused && !v.ended);
+  }
+
+  /**
+   * Mode PiP (vignette) : maintien de lecture + promotion CSS du lecteur sur
+   * tout le viewport, pour que la vignette Android — qui recopie la fenêtre de
+   * l'Activity — ne montre que la vidéo. La classe est retirée par TOUTES les
+   * voies de sortie (resize, canal natif, tick de sécurité, boot) : une classe
+   * restée collée donnait autrefois un écran noir au retour.
+   */
+  function setPipMode(on, source) {
+    if (keep.pip === on) return;
+    keep.pip = on;
+    document.documentElement.classList.toggle('tubeguard-pip', on);
+    reportGuard('pip-' + (on ? 'on' : 'off') + ':' + source, null);
+    if (on) resumeIfNeeded('pip:' + source);
   }
 
   installPageHooks();
@@ -259,6 +452,11 @@
   function currentVideo() {
     return document.querySelector('video.html5-main-video') ||
            document.querySelector('video');
+  }
+
+  /** Relance `v` si elle est en pause (hors fin de vidéo) ; l'échec est ignoré. */
+  function playIfPaused(v) {
+    if (v && v.paused && !v.ended) v.play().catch(function () { /* réessai plus tard */ });
   }
 
   /**
@@ -406,119 +604,71 @@
   }
 
   // =========================================================================
-  // 3bis. Anti-pause AUTONOME (sans canal natif)
+  // 3bis. Maintien de lecture : relance (filet de sécurité)
   // =========================================================================
   //
-  // Objectif : garder la lecture quand l'app n'est pas au premier plan (PiP,
-  // écran éteint, bascule vers une autre app) SANS dépendre d'un message
-  // d'Android — le canal natif s'est révélé peu fiable à établir.
-  //
-  // Signal utilisé : document.hasFocus(). Contrairement à document.hidden (que
-  // l'on spoofe pour empêcher YouTube de se mettre en pause), hasFocus() n'est
-  // PAS spoofé et reflète la réalité :
-  //   - premier plan            -> hasFocus() = true  (l'utilisateur gère la pause)
-  //   - PiP / écran éteint / autre app -> hasFocus() = false
-  //
-  // Règle : si la page n'a pas le focus ET que la vidéo jouait juste avant de
-  // perdre le focus ET qu'elle vient de se mettre en pause, on relance. En PiP
-  // l'utilisateur n'a aucun bouton pause de toute façon.
-  let wasPlayingWhenUnfocused = false;
-
-  function noteFocusLoss() {
+  // L'interception de pause() (section 1e) bloque les pauses venant du code de
+  // la page. Restent celles que Gecko déclenche lui-même (perte de focus audio,
+  // élément retiré du DOM…) : elles émettent un évènement `pause` sans passer
+  // par le prototype. Pour celles-là, on relance — avec un léger délai pour
+  // laisser passer une pause transitoire (changement de source).
+  function resumeIfNeeded(reason) {
+    if (!shouldKeepPlaying()) return;
     const v = currentVideo();
-    wasPlayingWhenUnfocused = !!(v && !v.paused && !v.ended);
+    if (!v || !v.paused || v.ended) return;
+    reportGuard('resume:' + reason, true);
+    v.play().then(
+      function () { reportGuard('resume-ok', false); },
+      function () { reportGuard('resume-FAILED', true); }
+    );
   }
 
-  function resumeIfBackgrounded() {
-    if (document.hasFocus()) return;        // au premier plan : ne pas interférer
-    if (!wasPlayingWhenUnfocused) return;   // était déjà en pause : respecter
+  /** Pause voulue par l'utilisateur (notification, casque, vignette PiP). */
+  function pauseForUser() {
+    keep.userPaused = true;
     const v = currentVideo();
-    if (v && v.paused && !v.ended) {
-      v.play().catch(function () { /* réessai au prochain tick */ });
-    }
+    if (v && !v.paused) v.pause(); // X-ray → méthode native, jamais interceptée
+    reportGuard('user-pause', true);
   }
 
-  function startBackgroundKeepAlive() {
-    // Mémorise l'état de lecture au moment où l'app perd le focus.
-    window.addEventListener('blur', noteFocusLoss, true);
-    // Réaction immédiate à toute mise en pause survenue hors focus.
+  function playForUser() {
+    keep.userPaused = false;
+    playIfPaused(currentVideo());
+    reportGuard('user-play', false);
+  }
+
+  function startPlaybackKeeper() {
+    // Réaction à toute pause « native » (voir ci-dessus).
     document.addEventListener('pause', function (e) {
-      if (e && e.target && e.target.tagName === 'VIDEO') resumeIfBackgrounded();
+      if (e && e.target && e.target.tagName === 'VIDEO') {
+        setTimeout(function () { resumeIfNeeded('pause-event'); }, 60);
+      }
     }, true);
-    // Filet de sécurité : YouTube peut re-pauser à retardement.
-    setInterval(resumeIfBackgrounded, 1000);
+    // Une lecture qui (re)démarre, d'où qu'elle vienne, annule la pause
+    // utilisateur : même sans canal natif, un « play » depuis la notification
+    // remet le maintien en service.
+    document.addEventListener('play', function (e) {
+      if (e && e.target && e.target.tagName === 'VIDEO') keep.userPaused = false;
+    }, true);
+    // Filet de sécurité : YouTube peut re-pauser à retardement ; et si la
+    // fenêtre a retrouvé sa taille sans que le resize de sortie nous soit
+    // parvenu, on quitte le mode PiP ici.
+    setInterval(function () {
+      if (keep.pip && viewport.isShrunk && !viewport.isShrunk()) setPipMode(false, 'tick');
+      resumeIfNeeded('tick');
+    }, 1000);
   }
 
   // =========================================================================
   // 4. Canal natif : commandes venues de l'app Android
   // =========================================================================
 
-  /**
-   * Mode « PiP » : au lieu de demander le plein écran HTML (que Firefox refuse
-   * sans geste utilisateur récent), on promeut le lecteur en position fixe sur
-   * tout le viewport via une classe CSS. Le résultat visuel est identique du
-   * point de vue de la vignette Picture-in-Picture d'Android, qui recopie la
-   * fenêtre de l'Activity.
-   */
-  function setPipLayout(enabled) {
-    // La promotion CSS « plein écran noir » du lecteur pour la vignette PiP est
-    // désactivée : le PiP vidéo ne tient pas la lecture de toute façon, et une
-    // classe restée collée après une sortie de PiP ratée provoquait un écran
-    // noir au démarrage suivant. On se contente donc de RETIRER toute trace.
-    document.documentElement.classList.remove('tubeguard-pip');
-  }
-
-  // ---- Anti-pause en PiP / arrière-plan --------------------------------
-  // Quand l'app est en miniature (PiP) ou écran éteint, le lecteur YouTube se
-  // remet en pause de lui-même (constaté : ~600 ms après un play, alors même
-  // que la session GeckoView est active et sans perte de focus audio). En PiP
-  // l'utilisateur n'a aucun bouton pause, donc toute pause y est non désirée :
-  // on relance la lecture dès qu'elle se coupe, tant que ce mode est actif.
-  let keepPlaying = false;
-  let guardedVideo = null;
   let appPort = null;
 
   function reportGuard(state, paused) {
     try {
       if (appPort) appPort.postMessage({ event: 'guard', state: state, paused: !!paused });
     } catch (e) { /* ignoré */ }
-  }
-
-  function onGuardPause() {
-    if (!keepPlaying) return;
-    const v = guardedVideo;
-    if (!v || v.ended) return;
-    reportGuard('pause-detected', true);
-    setTimeout(function () {
-      if (keepPlaying && v === currentVideo() && v.paused && !v.ended) {
-        v.play().then(
-          function () { reportGuard('resume-ok', false); },
-          function () { reportGuard('resume-FAILED', true); }
-        );
-      }
-    }, 60);
-  }
-
-  function armPlaybackGuard(on) {
-    keepPlaying = on;
-    const v = currentVideo();
-    reportGuard(on ? 'armed' : 'disarmed', v ? v.paused : null);
-    if (guardedVideo && guardedVideo !== v) {
-      guardedVideo.removeEventListener('pause', onGuardPause);
-      guardedVideo = null;
-    }
-    if (on && v) {
-      if (guardedVideo !== v) {
-        v.addEventListener('pause', onGuardPause);
-        guardedVideo = v;
-      }
-      if (v.paused && !v.ended) {
-        v.play().then(
-          function () { reportGuard('initial-play-ok', false); },
-          function () { reportGuard('initial-play-FAILED', true); }
-        );
-      }
-    }
   }
 
   // Le canal natif est FRAGILE à établir : selon que la page se charge avant ou
@@ -549,10 +699,11 @@
     port.onMessage.addListener((msg) => {
       acked = true; // on a reçu quelque chose : le port est bien vivant
       if (!msg) return;
-      if (msg.cmd === 'enterVideoFullscreen') { setPipLayout(true); armPlaybackGuard(true); }
-      if (msg.cmd === 'exitVideoFullscreen') { setPipLayout(false); armPlaybackGuard(false); }
-      if (msg.cmd === 'keepPlaying') armPlaybackGuard(true);
-      if (msg.cmd === 'releasePlaying') armPlaybackGuard(false);
+      if (msg.cmd === 'pip') setPipMode(!!msg.on, 'native');
+      if (msg.cmd === 'keepPlaying') { keep.native = true; resumeIfNeeded('native-keep'); }
+      if (msg.cmd === 'releasePlaying') keep.native = false;
+      if (msg.cmd === 'userPause') pauseForUser();
+      if (msg.cmd === 'userPlay') playForUser();
     });
 
     port.onDisconnect.addListener(() => {
@@ -599,10 +750,10 @@
   // =========================================================================
 
   function boot() {
-    document.documentElement.classList.remove('tubeguard-pip');
+    if (!keep.pip) document.documentElement.classList.remove('tubeguard-pip');
     startAdWatcher();
     applyCosmeticFilters();
-    startBackgroundKeepAlive();
+    startPlaybackKeeper();
     connectToApp();
 
     // m.youtube.com est une SPA : elle navigue sans recharger la page, donc le

@@ -16,12 +16,20 @@ import org.mozilla.geckoview.WebExtension
  *
  * À quoi ça sert concrètement ?
  *
- *  - **Picture-in-Picture propre.** Le PiP d'Android duplique le contenu de la
- *    fenêtre de l'Activity. Comme l'Activity n'affiche qu'un GeckoView plein
- *    écran, la vignette PiP montrerait toute la page YouTube (barre de
- *    recherche, commentaires…) au lieu de la seule vidéo. On demande donc au
- *    content script de mettre l'élément `<video>` en plein écran HTML juste
- *    avant d'entrer en PiP : la vignette ne contient alors que la vidéo.
+ *  - **Picture-in-Picture.** On signale l'entrée/sortie de la vignette (cmd
+ *    `pip`). Le content script y répond en promouvant le lecteur sur tout le
+ *    viewport (la vignette Android recopie la fenêtre de l'Activity : sans ça
+ *    elle montrerait toute la page) et en maintenant la lecture — il ignore
+ *    les `pause()` que le lecteur YouTube tente de lui-même en PiP.
+ *  - **Maintien de lecture écran éteint** (cmd `keepPlaying` / `releasePlaying`).
+ *  - **Pause / lecture voulues par l'utilisateur** (cmd `userPause` /
+ *    `userPlay`) : venant de la notification, du casque ou des contrôles de la
+ *    vignette PiP, elles doivent passer MALGRÉ le maintien de lecture. L'app les
+ *    annonce avant de piloter la MediaSession, pour que le content script les
+ *    laisse passer.
+ *
+ *  Le canal est fragile à établir (voir le content script) : chaque commande a
+ *  un repli autonome côté JS, et n'est jamais indispensable.
  *
  * Le délégué est posé sur la SESSION : GeckoView n'y délivre que les ports
  * ouverts par les content scripts (le background script, lui, exigerait un
@@ -85,11 +93,8 @@ object NativeBridge {
         }
     }
 
-    /** Demande au content script de passer la vidéo en plein écran HTML. */
-    fun requestVideoFullscreen() = send("enterVideoFullscreen")
-
-    /** Sort du plein écran HTML. */
-    fun exitVideoFullscreen() = send("exitVideoFullscreen")
+    /** Signale l'entrée (true) ou la sortie (false) du Picture-in-Picture. */
+    fun pipChanged(inPip: Boolean) = send("pip", JSONObject().put("on", inPip))
 
     /** Demande de maintenir la lecture (arrière-plan écran éteint). */
     fun keepPlaying() = send("keepPlaying")
@@ -97,14 +102,20 @@ object NativeBridge {
     /** Relâche le maintien de lecture (retour au premier plan). */
     fun releasePlaying() = send("releasePlaying")
 
-    private fun send(cmd: String) {
+    /** L'utilisateur a demandé la pause (notification, casque, vignette PiP). */
+    fun userPause() = send("userPause")
+
+    /** L'utilisateur a demandé la lecture. */
+    fun userPlay() = send("userPlay")
+
+    private fun send(cmd: String, message: JSONObject = JSONObject()) {
         val p = port
         if (p == null) {
             Log.w(TAG, "send('$cmd') IGNORÉ : aucun port connecté")
             return
         }
         try {
-            p.postMessage(JSONObject().put("cmd", cmd))
+            p.postMessage(message.put("cmd", cmd))
             Log.i(TAG, "send('$cmd') envoyé")
         } catch (e: Exception) {
             Log.w(TAG, "Envoi '$cmd' impossible", e)

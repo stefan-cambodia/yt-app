@@ -153,9 +153,24 @@ object MediaBridge {
     // Sorties : commandes venues de la notification / du casque
     // ------------------------------------------------------------------
 
-    fun play() = geckoSession?.play()
-    fun pause() = geckoSession?.pause()
-    fun stop() = geckoSession?.stop()
+    // Play / pause / stop sont d'abord annoncés au content script : en PiP ou
+    // en arrière-plan il ignore les pauses venant de la page, et doit savoir
+    // que celle-ci vient de l'utilisateur pour la laisser passer.
+    fun play() {
+        NativeBridge.userPlay()
+        geckoSession?.play()
+    }
+
+    fun pause() {
+        NativeBridge.userPause()
+        geckoSession?.pause()
+    }
+
+    fun stop() {
+        NativeBridge.userPause()
+        geckoSession?.stop()
+    }
+
     fun next() = geckoSession?.nextTrack()
     fun previous() = geckoSession?.previousTrack()
     fun seekForward() = geckoSession?.seekForward()

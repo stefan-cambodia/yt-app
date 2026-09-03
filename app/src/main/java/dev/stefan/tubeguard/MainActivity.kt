@@ -36,9 +36,6 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
     /** true quand la page a demandé le plein écran HTML (vidéo en grand). */
     private var isHtmlFullscreen = false
 
-    /** true quand c'est NOUS qui avons forcé le plein écran pour le PiP. */
-    private var fullscreenForcedForPip = false
-
     private var isInPip = false
 
     /** true tant que l'app est en arrière-plan avec une lecture à maintenir. */
@@ -265,10 +262,10 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
             override fun onPause(session: GeckoSession, mediaSession: MediaSession) {
                 Log.i(TAG, "media onPause (pip=$isInPip)")
                 MediaBridge.onPlaybackStateChanged(false)
-                // NB : on ne relance PLUS automatiquement en PiP. La relance
-                // (play/pause) provoquait une saccade sans jamais tenir, car la
-                // pause revient en boucle (limite GeckoView/lecteur mobile en
-                // PiP). On laisse donc la pause s'appliquer proprement.
+                // NB : aucune relance ici. Une relance native (play après pause)
+                // luttait en boucle contre le lecteur et produisait une saccade.
+                // Le maintien de lecture en PiP / arrière-plan est fait dans le
+                // content script, qui empêche la pause à la source.
             }
 
             override fun onStop(session: GeckoSession, mediaSession: MediaSession) {
@@ -344,10 +341,10 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
     }
 
     private fun enterPip() {
-        // La promotion du <video> est faite dans onPictureInPictureModeChanged,
+        // Le signal au content script est envoyé dans onPictureInPictureModeChanged,
         // pas ici : sur Android 12+, setAutoEnterEnabled fait entrer le système
         // en PiP tout seul sans passer par enterPip(), et il faut que les DEUX
-        // chemins déclenchent la promotion. Ici on se contente de l'appel manuel
+        // chemins le déclenchent. Ici on se contente de l'appel manuel
         // (indispensable sur Android 8-11 qui n'ont pas l'auto-enter).
         runCatching { enterPictureInPictureMode(buildPipParams()) }
             .onFailure { Log.w(TAG, "Entrée en PiP refusée", it) }
@@ -386,12 +383,11 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
         if (isInPictureInPictureMode) {
             // Entrée en PiP, quel qu'en soit le déclencheur (appel manuel OU
             // auto-enter système d'Android 12+). C'est le seul endroit commun
-            // aux deux chemins : on y promeut le <video> pour que la vignette
-            // ne montre que la vidéo, pas toute la page.
-            if (!isHtmlFullscreen && !fullscreenForcedForPip) {
-                NativeBridge.requestVideoFullscreen()
-                fullscreenForcedForPip = true
-            }
+            // aux deux chemins : on y prévient le content script, qui cadre la
+            // vignette sur la vidéo et maintient la lecture. Il a aussi son
+            // propre détecteur (rétrécissement de la fenêtre) si ce message
+            // se perd.
+            NativeBridge.pipChanged(true)
 
             // ⚠️ Cœur du correctif « la vidéo s'arrête en PiP ».
             // GeckoView bascule sa session en inactive quand la visibilité de la
@@ -403,12 +399,8 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
             binding.geckoView.postDelayed({ keepSessionActive("enterPip+600ms") }, 600)
             binding.geckoView.postDelayed({ keepSessionActive("enterPip+1500ms") }, 1500)
         } else {
-            // Retour en plein écran d'app : on annule le plein écran HTML si
-            // c'est nous qui l'avions forcé.
-            if (fullscreenForcedForPip) {
-                NativeBridge.exitVideoFullscreen()
-                fullscreenForcedForPip = false
-            }
+            // Retour en plein écran d'app.
+            NativeBridge.pipChanged(false)
             applyImmersiveMode()
         }
     }
