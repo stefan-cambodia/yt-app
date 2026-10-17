@@ -2,6 +2,7 @@ package dev.stefan.tubeguard
 
 import android.Manifest
 import android.app.PictureInPictureParams
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -181,6 +182,14 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
                 val uri = Uri.parse(request.uri)
                 val host = uri.host
                 return when {
+                    // intent:, mailto:, sms:, whatsapp:, tg:… (boutons du panneau
+                    // de partage de YouTube) : Gecko ne sait pas les charger, ils
+                    // désignent une app Android. Testé AVANT `host == null`, qui
+                    // garderait mailto:/sms: dans l'app sur une page d'erreur.
+                    isAppScheme(uri.scheme) -> {
+                        openExternally(request.uri)
+                        GeckoResult.deny()
+                    }
                     // about:blank, blob:, data:… (générés par le lecteur) : pas
                     // d'hôte, on les garde dans l'app. Les renvoyer au navigateur
                     // système via ACTION_VIEW n'aurait aucun sens.
@@ -202,7 +211,8 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
             ): GeckoResult<GeckoSession>? {
                 // target="_blank" : on charge dans la session courante plutôt
                 // que d'ouvrir un « onglet » qu'on n'a pas d'UI pour afficher.
-                if (isInternalHost(Uri.parse(uri).host)) {
+                val parsed = Uri.parse(uri)
+                if (!isAppScheme(parsed.scheme) && isInternalHost(parsed.host)) {
                     session.loadUri(uri)
                 } else {
                     openExternally(uri)
@@ -217,6 +227,25 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onSessionStateChange(session: GeckoSession, state: GeckoSession.SessionState) {
                 GeckoEngine.rememberState(state)
+            }
+        }
+
+        // --- Prompts : bouton « Partager » de YouTube (Web Share API) ---
+        // Sans PromptDelegate, GeckoView rejette navigator.share() en silence :
+        // le bouton Partager ne faisait rien. On le relaie à la feuille de
+        // partage Android, qui donne accès à toutes les apps installées.
+        session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onSharePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.SharePrompt
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                Log.i(TAG, "navigator.share() : ${prompt.uri}")
+                val result = if (shareExternally(prompt.title, prompt.text, prompt.uri)) {
+                    GeckoSession.PromptDelegate.SharePrompt.Result.SUCCESS
+                } else {
+                    GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE
+                }
+                return GeckoResult.fromValue(prompt.confirm(result))
             }
         }
 
@@ -487,15 +516,80 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
     }
 
     private fun openExternally(url: String) {
-        runCatching {
-            startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = if (url.startsWith("intent:", ignoreCase = true)) {
+            // intent://…#Intent;package=…;end : format propre à Android. On le
+            // restreint à ce qu'un navigateur autoriserait (BROWSABLE, pas de
+            // composant ni de sélecteur explicites) pour qu'une page ne puisse
+            // pas lancer n'importe quelle Activity interne d'une autre app.
+            runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull()?.apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                component = null
+                selector = null
+            }
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        }
+        if (intent == null) {
+            Log.w(TAG, "Lien intent: illisible : $url")
+            return
+        }
+        runCatching { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .onFailure {
+                Log.w(TAG, "Aucune app pour ouvrir $url", it)
+                // App cible absente : intent: prévoit souvent une page web de repli.
+                intent.getStringExtra("browser_fallback_url")?.let { fallback ->
+                    runCatching {
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(fallback))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }
+            }
+    }
+
+    /**
+     * Ouvre la feuille de partage Android pour un `navigator.share()` de la page.
+     * Renvoie false si rien n'est à partager ou si la feuille n'a pas pu s'ouvrir.
+     */
+    private fun shareExternally(title: String?, text: String?, url: String?): Boolean {
+        // Les apps cibles (WhatsApp, Messenger…) n'affichent que EXTRA_TEXT :
+        // on y met le texte ET le lien, sans doubler le lien s'il y est déjà.
+        val body = listOfNotNull(
+            text?.takeIf { it.isNotBlank() },
+            url?.takeIf { it.isNotBlank() && text?.contains(it) != true }
+        ).joinToString("\n")
+        if (body.isEmpty()) return false
+
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, body)
+        title?.takeIf { it.isNotBlank() }?.let { send.putExtra(Intent.EXTRA_SUBJECT, it) }
+
+        val chooser = Intent.createChooser(send, title)
+            // TubeGuard accepte lui-même SEND text/plain (ouvrir un lien partagé
+            // depuis une autre app) : inutile qu'il se propose comme destination.
+            .putExtra(
+                Intent.EXTRA_EXCLUDE_COMPONENTS,
+                arrayOf(ComponentName(this, MainActivity::class.java))
             )
-        }.onFailure { Log.w(TAG, "Aucune app pour ouvrir $url", it) }
+            // Sans ce flag, ouvrir la feuille déclenche onUserLeaveHint (et
+            // l'auto-PiP d'Android 12+) : la vidéo en cours partirait en vignette.
+            .addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+
+        return runCatching { startActivity(chooser) }
+            .onFailure { Log.w(TAG, "Feuille de partage indisponible", it) }
+            .isSuccess
     }
 
     private fun isInternalHost(host: String?): Boolean = YouTubeLinks.isInternalHost(host)
+
+    /**
+     * true pour un schéma qui désigne une app Android plutôt qu'une page web.
+     * Un schéma absent (cas théorique d'URL relative) reste côté Gecko.
+     */
+    private fun isAppScheme(scheme: String?): Boolean =
+        scheme != null && scheme.lowercase() !in GECKO_SCHEMES
 
     // ------------------------------------------------------------------
 
@@ -522,5 +616,11 @@ class MainActivity : androidx.activity.ComponentActivity(), MediaBridge.Listener
 
         /** Mode immersif permanent (cf. [applyImmersiveMode]). */
         private const val IMMERSIVE_ALWAYS = false
+
+        /** Schémas que Gecko charge lui-même ; tout autre est confié à Android. */
+        private val GECKO_SCHEMES = setOf(
+            "http", "https", "about", "blob", "data", "javascript",
+            "file", "resource", "moz-extension", "view-source",
+        )
     }
 }

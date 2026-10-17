@@ -33,6 +33,8 @@ YouTube et n'a pas vocation à être publié.
 | Bouton retour Android → historique GeckoView | `MainActivity.setupBackNavigation()` |
 | Session persistante (cookies, compte Google, onglet courant) | `GeckoEngine` (profil Gecko + `SessionState` sérialisé) |
 | Interception des liens `youtube.com` / `youtu.be` / `m.youtube.com` | `AndroidManifest.xml` (intent-filters) + `YouTubeLinks.normalize()` |
+| Bouton « Partager » → feuille de partage Android (WhatsApp, Messenger…) | `MainActivity` (`onSharePrompt`, `shareExternally`) |
+| Liens `intent:` / `mailto:` / `whatsapp:`… confiés à l'app Android concernée | `MainActivity.isAppScheme()`, `openExternally()` |
 | Picture-in-Picture natif (vignette cadrée sur la vidéo, lecture maintenue) | `MainActivity.enterPip()`, `ads.js` (`installPauseInterceptor`, `setPipMode`) |
 | Audio en arrière-plan écran éteint (MediaSession + wake lock) | `PlaybackService`, `MediaBridge` |
 | Icône et nom personnalisés, sans marque YouTube | `res/drawable/ic_launcher_foreground.xml`, `strings.xml` |
